@@ -1,0 +1,9 @@
+# The dsh-lore-memory bundle patch: one Host row.
+#
+# Config (both optional):
+#   dbPath: database file, default ~/.dsh/lore-memory.db (shared by every profile)
+#   searchLimitDefault: results per query without a limit, default 8
+- insert:
+    - id: lore-memory
+      name: dsh-lore-memory
+      config: {}

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Lore & Memory",
+    "description": "Per-workspace notes for the agent: lore holds the rules you set, shown every turn; memory holds what the agent keeps for itself, loaded when an agent starts. Both are searchable in Chinese and English."
+  }
+}
