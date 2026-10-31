@@ -30,7 +30,7 @@ Both are grouped by scope, nearest first.
 
 | tool | actions | approval |
 |---|---|---|
-| `lore` | `query`, `add`, `edit`, `remove` | every change asks you through the host's approval prompt; under a "never ask" policy the agent cannot change lore |
+| `lore` | `query`, `add`, `edit`, `remove` | every change asks you through the host's approval prompt; in Full Access (no sandbox, prompts off) it applies directly; with prompts off in any other mode the agent cannot change lore |
 | `memory` | `query`, `add`, `update`, `remove`; every entry has a `kind` | none |
 
 `query` with search terms returns entries matching **any** term, ranked by `bm25`, so entries matching more terms, and rarer ones, come first. Prefix matches (`test` finds `testing`) and pinyin (`zhoujielun` finds `周杰伦`) are intended. Without terms, `query` lists every visible entry, nearest scope first. Results are presented as reference knowledge, and each one shows its scope.

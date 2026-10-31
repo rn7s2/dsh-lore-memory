@@ -137,15 +137,57 @@ describe('§10 acceptance', () => {
     expect(host.approvals).toHaveLength(count)
   })
 
-  it('under a "never ask" policy the agent cannot change lore, even if the gate is bypassed', async () => {
+  it('with approval prompts off outside Full Access the agent cannot change lore, even if the gate is bypassed', async () => {
     const root = tempDir()
     const { acme } = workspaces(root)
     const { host, store } = setup(join(root, 'db.sqlite'))
     const agent = await host.newAgent(acme)
-    host.approvalAnswer = 'rejected' // what the approval service answers under `never`
-    await expect(host.callToolUngated(agent, 'lore', { action: 'add', text: 'Sneaky rule.' })).rejects.toThrow(/not approved/)
+    host.approvalPolicy = 'never'
+    host.sandboxMode = 'workspace-write'
+    const refused = await host.callTool(agent, 'lore', { action: 'add', text: 'Sneaky rule.' })
+    expect(refused).toMatchObject({ ok: false, error: expect.stringContaining('approval prompts are off in this session') })
+    expect(refused).toMatchObject({ error: expect.stringContaining('/lore <text>') })
+    await expect(host.callToolUngated(agent, 'lore', { action: 'add', text: 'Sneaky rule.' })).rejects.toThrow(/approval prompts are off/)
     host.services.delete('approval')
     await expect(host.callToolUngated(agent, 'lore', { action: 'add', text: 'Sneaky rule.' })).rejects.toThrow(/no approval service/)
+    expect((await store).list('lore', acme)).toEqual([])
+    expect(host.approvals).toEqual([])
+  })
+
+  it('in Full Access the agent changes lore directly, without an approval prompt', async () => {
+    const root = tempDir()
+    const { acme } = workspaces(root)
+    const { host, store } = setup(join(root, 'db.sqlite'))
+    const agent = await host.newAgent(acme)
+    host.approvalPolicy = 'never'
+    host.sandboxMode = 'danger-full-access'
+    const added = (await host.callTool(agent, 'lore', { action: 'add', text: 'Use pnpm, never npm.' })) as any
+    expect(added).toMatchObject({ ok: true, text: expect.stringContaining('Full Access') })
+    const id = added.value.entries[0].id
+    expect((await host.callTool(agent, 'lore', { action: 'edit', id, text: 'Use pnpm only.' })).ok).toBe(true)
+    expect((await store).list('lore', acme).map((e) => e.text)).toEqual(['Use pnpm only.'])
+    // The gate-free path decides the same way.
+    const direct = await host.callToolUngated(agent, 'lore', { action: 'remove', id })
+    expect(direct.message).toContain('Full Access')
+    expect((await store).list('lore', acme)).toEqual([])
+    expect(host.approvals).toEqual([])
+    // Parent workspace lore stays read-only even in Full Access.
+    const { work } = workspaces(root)
+    await host.command(await host.newAgent(work), 'lore', 'Parent rule.')
+    const parentId = (await store).list('lore', work)[0]!.id
+    expect(await host.callTool(agent, 'lore', { action: 'remove', id: parentId })).toMatchObject({ ok: false, error: expect.stringContaining('parent workspace') })
+  })
+
+  it('a no-sandbox session that still asks for approval keeps asking', async () => {
+    const root = tempDir()
+    const { acme } = workspaces(root)
+    const { host, store } = setup(join(root, 'db.sqlite'))
+    const agent = await host.newAgent(acme)
+    host.approvalPolicy = 'ask'
+    host.sandboxMode = 'danger-full-access'
+    host.approvalAnswer = 'rejected'
+    expect((await host.callTool(agent, 'lore', { action: 'add', text: 'Asked rule.' })).ok).toBe(false)
+    expect(host.approvals).toHaveLength(1)
     expect((await store).list('lore', acme)).toEqual([])
   })
 
