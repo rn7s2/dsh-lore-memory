@@ -1,13 +1,16 @@
 /**
  * The `lore` and `memory` agent tools.
  *
- * Every lore change the agent makes needs the user's approval through the
- * host's approval prompt: a `tools/pre-execute` gate asks before dispatch, and
- * the tool asks the approval service itself if that gate was bypassed. A
- * rejected or unavailable approval writes nothing.
+ * A lore change the agent makes asks the user through the host's approval
+ * prompt (a `tools/pre-execute` gate asks before dispatch, and the tool asks
+ * the approval service itself if that gate was bypassed); a rejected or
+ * unavailable approval writes nothing. In a Full Access session (no sandbox,
+ * approval prompts off) the change applies directly. With prompts off in any
+ * other mode the agent cannot change lore.
  */
 import { StoreError } from './errors.js'
 import type { AgentLike } from './host.js'
+import { type LorePermission, REFUSED_UNAVAILABLE } from './permission.js'
 import { renderChange, renderResults } from './render.js'
 import type { LoreMemoryService } from './service.js'
 import { type Entry, type EntryType, MEMORY_KINDS, type MemoryKind, isMemoryKind } from './store.js'
@@ -195,6 +198,8 @@ export interface ToolDeps {
   readonly service: LoreMemoryService
   readonly searchLimitDefault: number
   readonly approval: () => ApprovalLike | undefined
+  /** How this agent may change lore right now. */
+  readonly permission: (agent: AgentLike) => LorePermission
   /** Executions whose approval the pre-execute gate already obtained. */
   readonly approved: { has(token: unknown): boolean; delete(token: unknown): boolean }
 }
@@ -204,7 +209,7 @@ export function loreTool(deps: ToolDeps): ToolDefinitionLike {
   return {
     name: 'lore',
     description:
-      "Lore: rules the user set for a workspace; the current lore is shown to you at the start of every turn. query searches the lore visible here (this workspace and its parent workspaces). add, edit, and remove change this workspace's lore and each needs the user's approval; lore of parent workspaces is read-only here.",
+      "Lore: rules the user set for a workspace; the current lore is shown to you at the start of every turn. query searches the lore visible here (this workspace and its parent workspaces). add, edit, and remove change this workspace's lore; each asks for the user's approval, except in Full Access sessions, where it applies directly. Lore of parent workspaces is read-only here.",
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -229,11 +234,19 @@ export function loreTool(deps: ToolDeps): ToolDefinitionLike {
       if (args.action === 'query') return await query(service, 'lore', agent, args, deps.searchLimitDefault)
       const plan = await planLoreChange(service, agent, rawArgs)
       const gated = exec.token !== undefined && deps.approved.delete(exec.token)
-      if (!gated) {
-        const approval = deps.approval()
-        if (approval === undefined) throw new StoreError('NOT_APPROVED', 'lore changes need the user\'s approval, and no approval service is available; nothing was changed')
-        const outcome = await approval.request({ agent, toolName: exec.name, callId: exec.callId, reason: plan!.reason, displayReason: plan!.displayReason, signal: exec.signal })
-        if (outcome !== 'allowed-once') throw new StoreError('NOT_APPROVED', `the lore change was not approved (${outcome}); nothing was changed`)
+      let how: string
+      if (gated) how = 'The user approved it'
+      else {
+        const permission = deps.permission(agent)
+        if (permission.kind === 'refused') throw new StoreError('NOT_APPROVED', permission.reason)
+        if (permission.kind === 'direct') how = 'Applied without an approval prompt because this session runs in Full Access'
+        else {
+          const approval = deps.approval()
+          if (approval === undefined) throw new StoreError('NOT_APPROVED', REFUSED_UNAVAILABLE)
+          const outcome = await approval.request({ agent, toolName: exec.name, callId: exec.callId, reason: plan!.reason, displayReason: plan!.displayReason, signal: exec.signal })
+          if (outcome !== 'allowed-once') throw new StoreError('NOT_APPROVED', `the user did not approve the lore change (${outcome}); nothing was changed`)
+          how = 'The user approved it'
+        }
       }
       const workspace = await service.workspaceOf(agent)
       const store = await service.store()
@@ -243,7 +256,7 @@ export function loreTool(deps: ToolDeps): ToolDefinitionLike {
       else if (args.action === 'edit') entry = await store.update('lore', workspace, args.id!, { text: args.text! }, meta)
       else entry = await store.remove('lore', workspace, args.id!)
       const verb = args.action === 'add' ? 'Added' : args.action === 'edit' ? 'Updated' : 'Removed'
-      return value(`${renderChange(verb, entry)} The user approved it; it takes effect from the next turn's lore copy.`, [entry])
+      return value(`${renderChange(verb, entry)} ${how}; it takes effect from the next turn's lore copy.`, [entry])
     },
   }
 }

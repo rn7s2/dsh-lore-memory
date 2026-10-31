@@ -73,6 +73,9 @@ export class FakeHost {
   readonly approvals: { reason?: string; displayReason?: unknown }[] = []
   /** What the user answers in the approval prompt. */
   approvalAnswer: 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable' = 'rejected'
+  /** The session's approval policy and sandbox mode (Full Access is `never` + `danger-full-access`). */
+  approvalPolicy: 'ask' | 'never' = 'ask'
+  sandboxMode: 'read-only' | 'workspace-write' | 'danger-full-access' = 'workspace-write'
   readonly sessions = new Map<string, FakeSession>()
   private callSeq = 0
 
@@ -97,12 +100,17 @@ export class FakeHost {
 
   constructor() {
     this.services.set('sessions', { get: (id: string) => this.sessions.get(id) })
+    const host = this
     this.services.set('approval', {
+      effectivePolicy: () => host.approvalPolicy,
       request: async (req: { reason?: string; displayReason?: unknown }) => {
+        // Like the real service: `never` rejects before any prompt is shown.
+        if (host.approvalPolicy === 'never') return 'rejected'
         this.approvals.push({ reason: req.reason, displayReason: req.displayReason })
         return this.approvalAnswer
       },
     })
+    this.services.set('sandboxPolicy', { resolve: () => ({ mode: host.sandboxMode }) })
   }
 
   dispose(): void {

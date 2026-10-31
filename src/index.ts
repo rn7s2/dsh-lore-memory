@@ -5,12 +5,14 @@
  *   built, and stays unchanged for the session (resume and compaction keep it).
  * - Lore enters every turn as a fresh copy placed just before the turn's new
  *   input; earlier copies stay where they are, so the prompt cache holds.
- * - `lore` and `memory` tools; agent lore changes need the user's approval.
+ * - `lore` and `memory` tools; agent lore changes need the user's approval,
+ *   except in Full Access sessions.
  * - `/lore` and `/memory` commands.
  */
 import { type LoreMemoryConfig, resolveConfig } from './config.js'
 import { errorMessage } from './errors.js'
 import type { AgentLike, MessageLike, SessionLike } from './host.js'
+import { type ApprovalPolicyLike, type LorePermission, type SandboxPolicyLike, lorePermission } from './permission.js'
 import { LoreMemoryService } from './service.js'
 import { LoreMemoryStore } from './store.js'
 import { loreCommand, memoryCommand, type CommandDefinitionLike } from './commands.js'
@@ -120,7 +122,10 @@ export function activate(context: unknown, config: LoreMemoryConfig = {}, option
     },
   )
 
-  // Agent lore changes: ask the user through the host's approval prompt.
+  // Agent lore changes: ask the user through the host's approval prompt,
+  // apply directly in Full Access, refuse when prompts are off otherwise.
+  const permission = (agent: AgentLike): LorePermission =>
+    lorePermission(agent, ctx.get('approval') as ApprovalPolicyLike | undefined, ctx.get('sandboxPolicy') as SandboxPolicyLike | undefined)
   const approved = new Set<unknown>()
   ctx.on('tools/pre-execute', async (exec: ToolExecLike, next: () => Promise<PreToolDecision>) => {
     const decision = await next()
@@ -132,6 +137,9 @@ export function activate(context: unknown, config: LoreMemoryConfig = {}, option
       return decision // the tool reports why the change cannot happen; nothing to approve
     }
     if (plan === undefined) return decision
+    const allowed = permission(exec.agent)
+    if (allowed.kind === 'direct') return decision
+    if (allowed.kind === 'refused') return { kind: 'deny', reason: allowed.reason }
     if (exec.token !== undefined) approved.add(exec.token)
     return { kind: 'ask', reason: plan.reason, displayReason: plan.displayReason }
   })
@@ -143,6 +151,7 @@ export function activate(context: unknown, config: LoreMemoryConfig = {}, option
     service,
     searchLimitDefault: resolved.searchLimitDefault,
     approval: () => ctx.get('approval') as ApprovalLike | undefined,
+    permission,
     approved,
   }
   ctx.tools.register(loreTool(deps))
