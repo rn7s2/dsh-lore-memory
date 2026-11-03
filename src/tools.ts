@@ -1,6 +1,10 @@
 /**
  * The `lore` and `memory` agent tools.
  *
+ * Both write to the session's own workspace by default. A call may name another
+ * workspace explicitly, which must be the session's workspace or one of its
+ * parent folders: an agent can therefore write broadly, but never sideways.
+ *
  * A lore change the agent makes asks the user through the host's approval
  * prompt (a `tools/pre-execute` gate asks before dispatch, and the tool asks
  * the approval service itself if that gate was bypassed); a rejected or
@@ -8,10 +12,13 @@
  * approval prompts off) the change applies directly. With prompts off in any
  * other mode the agent cannot change lore.
  */
+import { isAbsolute } from 'node:path'
+
 import { StoreError } from './errors.js'
 import type { AgentLike } from './host.js'
 import { type LorePermission, REFUSED_UNAVAILABLE } from './permission.js'
 import { renderChange, renderResults } from './render.js'
+import { canonicalWorkspace, isVisible } from './scope.js'
 import type { LoreMemoryService } from './service.js'
 import { type Entry, type EntryType, MEMORY_KINDS, type MemoryKind, isMemoryKind } from './store.js'
 
@@ -59,14 +66,15 @@ interface ParsedArgs {
   id?: number
   kind?: MemoryKind
   limit?: number
+  workspace?: string
 }
 
 function parseArgs(raw: unknown, actions: readonly string[], allowKind: boolean): ParsedArgs {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new StoreError('INVALID', 'arguments must be an object')
   const args = raw as Record<string, unknown>
-  const allowed = new Set(['action', 'query', 'text', 'id', 'limit', ...(allowKind ? ['kind'] : [])])
+  const allowed = new Set(['action', 'query', 'text', 'id', 'limit', 'workspace', ...(allowKind ? ['kind'] : [])])
   for (const key of Object.keys(args)) if (!allowed.has(key)) throw new StoreError('INVALID', `unknown argument "${key}"`)
-  const { action, query, text, id, kind, limit } = args
+  const { action, query, text, id, kind, limit, workspace } = args
   if (typeof action !== 'string' || !actions.includes(action)) throw new StoreError('INVALID', `action must be one of ${actions.join(', ')}`)
   const parsed: ParsedArgs = { action }
   if (query !== undefined) {
@@ -89,6 +97,11 @@ function parseArgs(raw: unknown, actions: readonly string[], allowKind: boolean)
     if (typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new StoreError('INVALID', 'limit must be an integer from 1 to 100')
     parsed.limit = limit
   }
+  if (workspace !== undefined) {
+    if (typeof workspace !== 'string') throw new StoreError('INVALID', 'workspace must be a string')
+    if (workspace.trim() === '') throw new StoreError('INVALID', 'workspace must be a non-empty string')
+    parsed.workspace = workspace.trim()
+  }
   return parsed
 }
 
@@ -100,6 +113,22 @@ function need<T>(value: T | undefined, name: string, action: string): T {
 function requireAgent(exec: ToolExecLike): AgentLike {
   if (exec.agent === undefined) throw new StoreError('INVALID', `${exec.name} must be called by an agent session`)
   return exec.agent
+}
+
+/**
+ * The workspace a change lands in: the session's own workspace unless the call
+ * names one. A named workspace must be that workspace or one of its parent
+ * folders, which is exactly what it can see.
+ */
+async function changeScope(service: LoreMemoryService, agent: AgentLike, args: ParsedArgs): Promise<string> {
+  const own = await service.workspaceOf(agent)
+  if (args.workspace === undefined) return own
+  if (!isAbsolute(args.workspace)) throw new StoreError('INVALID', `workspace must be an absolute path: ${args.workspace}`)
+  const target = await canonicalWorkspace(args.workspace)
+  if (!isVisible(target, own)) {
+    throw new StoreError('INVALID', `workspace must be ${own} or one of its parent folders; ${target} is neither, so nothing was changed`)
+  }
+  return target
 }
 
 interface ResultValue {
@@ -140,6 +169,9 @@ const OUTPUT_SCHEMA: JsonSchema = {
 const render = (_args: unknown, result: unknown): { type: 'text'; text: string }[] => [{ type: 'text', text: (result as ResultValue).message }]
 
 async function query(service: LoreMemoryService, type: EntryType, agent: AgentLike, args: ParsedArgs, defaultLimit: number): Promise<ResultValue> {
+  if (args.workspace !== undefined) {
+    throw new StoreError('INVALID', 'workspace is only for changes (add, edit, update, remove); a query already covers this workspace and its parent folders')
+  }
   const workspace = await service.workspaceOf(agent)
   const store = await service.store()
   const entries =
@@ -153,6 +185,8 @@ async function query(service: LoreMemoryService, type: EntryType, agent: AgentLi
 export interface LoreChangePlan {
   readonly reason: string
   readonly displayReason: { en: string; zh: string }
+  /** The workspace the change lands in. */
+  readonly workspace: string
 }
 
 const clip = (text: string, max = 600): string => (text.length <= max ? text : `${text.slice(0, max - 1)}…`)
@@ -164,7 +198,7 @@ const clip = (text: string, max = 600): string => (text.length <= max ? text : `
 export async function planLoreChange(service: LoreMemoryService, agent: AgentLike, rawArgs: unknown): Promise<LoreChangePlan | undefined> {
   const args = parseArgs(rawArgs, LORE_ACTIONS, false)
   if (args.action === 'query') return undefined
-  const workspace = await service.workspaceOf(agent)
+  const workspace = await changeScope(service, agent, args)
   const store = await service.store()
   if (args.action === 'add') {
     const text = need(args.text, 'text', 'add').trim()
@@ -173,6 +207,7 @@ export async function planLoreChange(service: LoreMemoryService, agent: AgentLik
     return {
       reason: `Add lore to ${workspace}: ${clip(text)}`,
       displayReason: { en: `Add this rule to the lore of ${workspace}:\n${clip(text)}`, zh: `将此规则加入 ${workspace} 的 lore：\n${clip(text)}` },
+      workspace,
     }
   }
   const id = need(args.id, 'id', args.action)
@@ -186,11 +221,13 @@ export async function planLoreChange(service: LoreMemoryService, agent: AgentLik
         en: `Change lore #${id} of ${workspace}\nfrom: ${clip(current.text, 300)}\nto: ${clip(text)}`,
         zh: `修改 ${workspace} 的 lore #${id}\n原文：${clip(current.text, 300)}\n改为：${clip(text)}`,
       },
+      workspace,
     }
   }
   return {
     reason: `Remove lore #${id} from ${workspace}: ${clip(current.text)}`,
     displayReason: { en: `Remove lore #${id} from ${workspace}:\n${clip(current.text)}`, zh: `删除 ${workspace} 的 lore #${id}：\n${clip(current.text)}` },
+    workspace,
   }
 }
 
@@ -209,7 +246,7 @@ export function loreTool(deps: ToolDeps): ToolDefinitionLike {
   return {
     name: 'lore',
     description:
-      "Lore: rules the user set for a workspace; the current lore is shown to you at the start of every turn. query searches the lore visible here (this workspace and its parent workspaces). add, edit, and remove change this workspace's lore; each asks for the user's approval, except in Full Access sessions, where it applies directly. Lore of parent workspaces is read-only here.",
+      "Lore: rules the user set for a workspace; the current lore is shown to you at the start of every turn. query searches the lore visible here (this workspace and its parent folders). add, edit, and remove change this workspace's lore; each asks for the user's approval, except in Full Access sessions, where it applies directly. Pass workspace (an absolute path: this workspace or a parent folder) to change that workspace's lore instead.",
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -223,6 +260,11 @@ export function loreTool(deps: ToolDeps): ToolDefinitionLike {
         text: { type: 'string', description: 'For add and edit: the complete rule.' },
         id: { type: 'integer', description: 'For edit and remove: the entry id (#id).' },
         limit: { type: 'integer', description: `For query with terms: maximum results, 1-100; default ${deps.searchLimitDefault}.` },
+        workspace: {
+          type: 'string',
+          description:
+            'For add, edit, and remove: the workspace to change, as an absolute path that is this session workspace or one of its parent folders. Defaults to this session workspace.',
+        },
       },
     },
     output: { schema: OUTPUT_SCHEMA, render },
@@ -248,7 +290,7 @@ export function loreTool(deps: ToolDeps): ToolDefinitionLike {
           how = 'The user approved it'
         }
       }
-      const workspace = await service.workspaceOf(agent)
+      const workspace = plan!.workspace
       const store = await service.store()
       const meta = { author: 'agent' as const, sessionId: agent.session.id }
       let entry: Entry
@@ -266,7 +308,7 @@ export function memoryTool(deps: ToolDeps): ToolDefinitionLike {
   return {
     name: 'memory',
     description:
-      'Your memory: knowledge you keep for yourself across sessions, per workspace. The memory visible here (this workspace and its parent workspaces) was loaded into your system prompt when this session started; query finds newer entries. Record durable, reusable knowledge rather than task progress, and keep it current: update entries that changed and remove wrong ones. Changes apply to this workspace only.',
+      'Your memory: knowledge you keep for yourself across sessions, per workspace. The memory visible here (this workspace and its parent folders) was loaded into your system prompt when this session started; query finds newer entries. Record durable, reusable knowledge rather than task progress, and keep it current: update entries that changed and remove wrong ones. Changes apply to this workspace only; pass workspace (an absolute path: this workspace or a parent folder) to change that workspace\'s memory instead.',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -285,6 +327,11 @@ export function memoryTool(deps: ToolDeps): ToolDefinitionLike {
         text: { type: 'string', description: 'For add and update: the complete entry.' },
         id: { type: 'integer', description: 'For update and remove: the entry id (#id).' },
         limit: { type: 'integer', description: `For query with terms: maximum results, 1-100; default ${deps.searchLimitDefault}.` },
+        workspace: {
+          type: 'string',
+          description:
+            'For add, update, and remove: the workspace to change, as an absolute path that is this session workspace or one of its parent folders. Defaults to this session workspace.',
+        },
       },
     },
     output: { schema: OUTPUT_SCHEMA, render },
@@ -294,7 +341,7 @@ export function memoryTool(deps: ToolDeps): ToolDefinitionLike {
       const agent = requireAgent(exec)
       const args = parseArgs(rawArgs, MEMORY_ACTIONS, true)
       if (args.action === 'query') return await query(service, 'memory', agent, args, deps.searchLimitDefault)
-      const workspace = await service.workspaceOf(agent)
+      const workspace = await changeScope(service, agent, args)
       const store = await service.store()
       const meta = { author: 'agent' as const, sessionId: agent.session.id }
       if (args.action === 'add') {
