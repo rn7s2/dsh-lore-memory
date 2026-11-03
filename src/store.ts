@@ -366,7 +366,7 @@ export class LoreMemoryStore {
     if (entry.scope !== workspace) {
       throw new StoreError(
         'PARENT_SCOPE',
-        `${type} entry #${id} belongs to the parent workspace ${entry.scope} and is read-only from ${workspace}; open a session in ${entry.scope} to change it`,
+        `${type} entry #${id} belongs to the parent workspace ${entry.scope} and cannot be changed from ${workspace}; pass workspace: ${JSON.stringify(entry.scope)} to change it from here`,
       )
     }
     return entry

@@ -17,7 +17,7 @@ Then ask the agent in DSH to install the bundle from that directory (Plugin Mana
 
 ## Scopes
 
-An entry belongs to the workspace folder it was written in. A session sees the entries of its own workspace and of every parent folder, matched on whole path components: `/work/acme` sees `/work`, while `/work/acme-other` does not see `/work/acme`. A session writes only to its own workspace, and entries from parent workspaces are read-only from below. Workspaces are identified by their real path (symlinks resolved). A subagent reads and writes its parent session's workspace.
+An entry belongs to the workspace folder it was written in. A session sees the entries of its own workspace and of every parent folder, matched on whole path components: `/work/acme` sees `/work`, while `/work/acme-other` does not see `/work/acme`. A session writes to its own workspace; a `lore` or `memory` call may name a parent folder explicitly and write there instead, so the agent can write broadly but never into a child or sibling. Workspaces are identified by their real path (symlinks resolved), so a symlinked path to a parent is the same scope. A subagent reads and writes its parent session's workspace.
 
 ## How notes reach the model
 
@@ -32,6 +32,8 @@ Both are grouped by scope, nearest first.
 |---|---|---|
 | `lore` | `query`, `add`, `edit`, `remove` | every change asks you through the host's approval prompt; in Full Access (no sandbox, prompts off) it applies directly; with prompts off in any other mode the agent cannot change lore |
 | `memory` | `query`, `add`, `update`, `remove`; every entry has a `kind` | none |
+
+Both tools take an optional `workspace`: an absolute path that is the session workspace or one of its parent folders. A change lands in that scope instead of the session workspace, and the approval prompt for lore names it. Without `workspace`, changes land in the session workspace, exactly as before. `query` takes no `workspace`, because it already covers the session workspace and its parents.
 
 `query` with search terms returns entries matching **any** term, ranked by `bm25`, so entries matching more terms, and rarer ones, come first. Prefix matches (`test` finds `testing`) and pinyin (`zhoujielun` finds `周杰伦`) are intended. Without terms, `query` lists every visible entry, nearest scope first. Results are presented as reference knowledge, and each one shows its scope.
 
@@ -62,7 +64,8 @@ Failures are reported and never break the session:
 
 - **Tokenizer missing or tampered with**: every vendored file is checked against a pinned SHA-256 before it is loaded. If one fails, the store becomes read-only: listing and injection still work, while search and writes fail with the reason.
 - **Database unavailable**: the tools and commands fail with the reason, and nothing is injected.
-- **Changing an entry from a parent workspace**: refused, and the message names the workspace to open instead.
+- **Changing an entry from a parent workspace without naming it**: refused, and the message says which `workspace` to pass instead.
+- **Naming a workspace that is neither the session's nor a parent folder, or a relative path**: refused, and nothing is changed.
 
 ## Development
 

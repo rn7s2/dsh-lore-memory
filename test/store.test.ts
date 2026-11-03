@@ -55,13 +55,16 @@ describe('store', () => {
     expect(store.list('memory', acme)).toEqual([])
   })
 
-  it('refuses to change a parent workspace entry and names the workspace to open', async () => {
+  it('refuses to change a parent workspace entry and names the workspace argument', async () => {
     const root = tempDir()
     const { work, acme, other } = workspaces(root)
     const store = await open(join(root, 'db.sqlite'))
     const broad = await store.add('memory', work, 'The CI runs on macOS.', 'fact', { author: 'agent' })
     const narrow = await store.add('memory', acme, 'acme uses Postgres 16.', 'fact', { author: 'agent' })
-    await expect(store.update('memory', acme, broad.id, { text: 'changed' }, user)).rejects.toMatchObject({ code: 'PARENT_SCOPE', message: expect.stringContaining(`open a session in ${work}`) })
+    await expect(store.update('memory', acme, broad.id, { text: 'changed' }, user)).rejects.toMatchObject({
+      code: 'PARENT_SCOPE',
+      message: expect.stringContaining(`pass workspace: ${JSON.stringify(work)}`),
+    })
     await expect(store.remove('memory', acme, broad.id)).rejects.toMatchObject({ code: 'PARENT_SCOPE' })
     await expect(store.remove('memory', other, narrow.id)).rejects.toMatchObject({ code: 'NOT_FOUND' })
     await expect(store.remove('lore', acme, narrow.id)).rejects.toMatchObject({ code: 'NOT_FOUND' })

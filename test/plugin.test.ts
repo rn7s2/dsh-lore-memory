@@ -87,22 +87,112 @@ describe('§10 acceptance', () => {
     expect(added.value.entries[0].scope).toBe(acme)
   })
 
-  it('refuses to change a parent workspace entry', async () => {
+  it('refuses to change a parent workspace entry unless the call names that workspace', async () => {
     const root = tempDir()
     const { work, acme } = workspaces(root)
-    const { host } = setup(join(root, 'db.sqlite'))
+    const { host, store } = setup(join(root, 'db.sqlite'))
     const atWork = await host.newAgent(work)
     const atAcme = await host.newAgent(acme)
     const added = (await host.callTool(atWork, 'memory', { action: 'add', kind: 'fact', text: 'Parent fact.' })) as any
     const id = added.value.entries[0].id
     const refused = await host.callTool(atAcme, 'memory', { action: 'remove', id })
-    expect(refused).toMatchObject({ ok: false, error: expect.stringContaining(`open a session in ${work}`) })
+    expect(refused).toMatchObject({ ok: false, error: expect.stringContaining(`pass workspace: "${work}"`) })
 
     await host.command(atWork, 'lore', 'Parent rule.')
     host.approvalAnswer = 'allowed-once'
     const loreRefused = await host.callTool(atAcme, 'lore', { action: 'remove', id: id + 1 })
     expect(loreRefused).toMatchObject({ ok: false, error: expect.stringContaining('parent workspace') })
     expect(host.approvals).toEqual([]) // nothing to approve for a change that cannot happen
+    expect((await store).list('memory', work)).toHaveLength(1)
+    expect((await store).list('lore', work)).toHaveLength(1)
+  })
+
+  it('memory defaults to the session workspace and follows an explicitly named one', async () => {
+    const root = tempDir()
+    const { work, acme } = workspaces(root)
+    const { host, store } = setup(join(root, 'db.sqlite'))
+    const agent = await host.newAgent(acme)
+
+    // Omitted: the session workspace, exactly as before.
+    const own = (await host.callTool(agent, 'memory', { action: 'add', kind: 'fact', text: 'Own fact.' })) as any
+    expect(own.value.entries[0].scope).toBe(acme)
+
+    // Named: the parent folder, and any higher one.
+    const broad = (await host.callTool(agent, 'memory', { action: 'add', kind: 'fact', text: 'Parent fact.', workspace: work })) as any
+    expect(broad.value.entries[0].scope).toBe(work)
+    const wide = (await host.callTool(agent, 'memory', { action: 'add', kind: 'fact', text: 'Root fact.', workspace: root })) as any
+    expect(wide.value.entries[0].scope).toBe(root)
+
+    // A symlinked path to that folder is the same scope.
+    const link = join(root, 'link-to-work')
+    symlinkSync(work, link)
+    const viaLink = (await host.callTool(agent, 'memory', { action: 'update', id: broad.value.entries[0].id, kind: 'convention', workspace: link })) as any
+    expect(viaLink.value.entries[0]).toMatchObject({ scope: work, kind: 'convention' })
+
+    expect((await host.callTool(agent, 'memory', { action: 'remove', id: broad.value.entries[0].id, workspace: work })).ok).toBe(true)
+    expect((await store).list('memory', work).map((e) => e.text)).toEqual(['Root fact.'])
+    expect((await store).list('memory', root).map((e) => e.text)).toEqual(['Root fact.'])
+    // The session workspace stays writable when it is named explicitly.
+    expect((await host.callTool(agent, 'memory', { action: 'remove', id: own.value.entries[0].id, workspace: acme })).ok).toBe(true)
+    expect(host.approvals).toEqual([]) // memory never asks
+  })
+
+  it('lore follows a named workspace and the approval names it', async () => {
+    const root = tempDir()
+    const { work, acme } = workspaces(root)
+    const { host, store } = setup(join(root, 'db.sqlite'))
+    const agent = await host.newAgent(acme)
+    host.approvalAnswer = 'allowed-once'
+
+    const added = (await host.callTool(agent, 'lore', { action: 'add', text: 'Parent rule.', workspace: work })) as any
+    expect(added.value.entries[0].scope).toBe(work)
+    expect(host.approvals.at(-1)!.reason).toContain(work)
+    expect(host.approvals.at(-1)!.displayReason).toMatchObject({ en: expect.stringContaining(work), zh: expect.any(String) })
+
+    const id = added.value.entries[0].id
+    host.approvalAnswer = 'rejected'
+    expect((await host.callTool(agent, 'lore', { action: 'edit', id, text: 'Changed rule.', workspace: work })).ok).toBe(false)
+    expect(host.approvals.at(-1)!.reason).toContain('Changed rule.')
+    expect((await store).list('lore', work).map((e) => e.text)).toEqual(['Parent rule.'])
+
+    host.approvalAnswer = 'allowed-once'
+    expect((await host.callTool(agent, 'lore', { action: 'remove', id })).ok).toBe(false) // the default scope still cannot reach it
+    expect((await host.callTool(agent, 'lore', { action: 'remove', id, workspace: work })).ok).toBe(true)
+    expect((await store).list('lore', work)).toEqual([])
+  })
+
+  it('refuses a workspace that is not the session workspace or one of its parents', async () => {
+    const root = tempDir()
+    const { work, acme, other } = workspaces(root)
+    const outside = tempDir('lore-memory-outside-')
+    const { host, store } = setup(join(root, 'db.sqlite'))
+    const agent = await host.newAgent(acme)
+
+    for (const workspace of [other, join(acme, 'below'), outside]) {
+      const memory = await host.callTool(agent, 'memory', { action: 'add', kind: 'fact', text: 'x', workspace })
+      expect(memory).toMatchObject({ ok: false, error: expect.stringContaining('workspace must be') })
+      expect(memory).toMatchObject({ error: expect.stringContaining('so nothing was changed') })
+      expect(await host.callTool(agent, 'lore', { action: 'add', text: 'x', workspace })).toMatchObject({ ok: false, error: expect.stringContaining('workspace must be') })
+    }
+    expect(await host.callTool(agent, 'memory', { action: 'add', kind: 'fact', text: 'x', workspace: 'relative/dir' })).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('absolute'),
+    })
+    expect(await host.callTool(agent, 'memory', { action: 'add', kind: 'fact', text: 'x', workspace: '   ' })).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('non-empty'),
+    })
+    expect(await host.callTool(agent, 'memory', { action: 'add', kind: 'fact', text: 'x', workspace: 42 })).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('must be a string'),
+    })
+    // Query already covers the parents, so naming one there is refused rather than silently ignored.
+    for (const name of ['memory', 'lore']) {
+      expect(await host.callTool(agent, name, { action: 'query', workspace: work })).toMatchObject({ ok: false, error: expect.stringContaining('only for changes') })
+    }
+    expect((await store).list('memory', acme)).toEqual([])
+    expect((await store).list('lore', work)).toEqual([])
+    expect(host.approvals).toEqual([]) // nothing is asked for a change that cannot happen
   })
 
   it('an agent lore change shows an approval prompt; rejecting it writes nothing', async () => {
@@ -171,11 +261,14 @@ describe('§10 acceptance', () => {
     expect(direct.message).toContain('Full Access')
     expect((await store).list('lore', acme)).toEqual([])
     expect(host.approvals).toEqual([])
-    // Parent workspace lore stays read-only even in Full Access.
+    // Parent workspace lore still needs that workspace named, then applies directly too.
     const { work } = workspaces(root)
     await host.command(await host.newAgent(work), 'lore', 'Parent rule.')
     const parentId = (await store).list('lore', work)[0]!.id
     expect(await host.callTool(agent, 'lore', { action: 'remove', id: parentId })).toMatchObject({ ok: false, error: expect.stringContaining('parent workspace') })
+    expect(await host.callTool(agent, 'lore', { action: 'remove', id: parentId, workspace: work })).toMatchObject({ ok: true, text: expect.stringContaining('Full Access') })
+    expect((await store).list('lore', work)).toEqual([])
+    expect(host.approvals).toEqual([])
   })
 
   it('a no-sandbox session that still asks for approval keeps asking', async () => {

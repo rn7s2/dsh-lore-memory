@@ -8,7 +8,7 @@ export type StoreErrorCode =
   | 'BUSY'
   /** No such entry is visible from the session's workspace. */
   | 'NOT_FOUND'
-  /** The entry belongs to a parent workspace, which is read-only from below. */
+  /** The entry belongs to a parent workspace, which a call that does not name it cannot change. */
   | 'PARENT_SCOPE'
   /** The request itself is invalid. */
   | 'INVALID'
