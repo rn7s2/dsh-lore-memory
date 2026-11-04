@@ -36,8 +36,19 @@ describe('scopes (§2)', () => {
 })
 
 describe('store', () => {
-  it('verifies the vendored tokenizer', () => {
+  it('verifies the vendored tokenizer for every supported target', () => {
     expect(verifyTokenizer().ok).toBe(true)
+    for (const [platform, arch] of [
+      ['darwin', 'arm64'],
+      ['darwin', 'x64'],
+      ['linux', 'x64'],
+    ]) {
+      expect(verifyTokenizer(defaultNativeRoot(), platform, arch)).toMatchObject({ ok: true })
+    }
+    expect(verifyTokenizer(defaultNativeRoot(), 'linux', 'arm64')).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('Linux x64'),
+    })
   })
 
   it('shows entries per the §2 table and writes only to the given workspace', async () => {
@@ -221,10 +232,11 @@ describe('store', () => {
 
     const nativeRoot = join(root, 'native-simple')
     cpSync(defaultNativeRoot(), nativeRoot, { recursive: true })
-    const library = join(nativeRoot, `darwin-${process.arch}`, 'libsimple.dylib')
-    const bytes = readFileSync(library)
+    const check = verifyTokenizer(nativeRoot)
+    if (!check.ok) throw new Error(check.reason)
+    const bytes = readFileSync(check.tokenizer.library)
     bytes[bytes.length - 1] = bytes[bytes.length - 1]! ^ 0xff
-    writeFileSync(library, bytes)
+    writeFileSync(check.tokenizer.library, bytes)
 
     const tampered = await open(dbPath, nativeRoot)
     expect(tampered.status()).toMatchObject({ state: 'read-only', reason: expect.stringContaining('failed its integrity check') })
@@ -241,7 +253,21 @@ describe('store', () => {
     cpSync(defaultNativeRoot(), nativeRoot, { recursive: true })
     writeFileSync(join(nativeRoot, 'dict', 'user.dict.utf8'), 'tampered\n')
     expect(verifyTokenizer(nativeRoot)).toMatchObject({ ok: false, reason: expect.stringContaining('dict/user.dict.utf8') })
-    expect(verifyTokenizer(nativeRoot, 'linux', 'x64')).toMatchObject({ ok: false, reason: expect.stringContaining('macOS only') })
+    expect(verifyTokenizer(nativeRoot, 'linux', 'arm64')).toMatchObject({ ok: false, reason: expect.stringContaining('Linux x64') })
+  })
+
+  it('rejects a tampered Linux x64 binary', () => {
+    const root = tempDir()
+    const nativeRoot = join(root, 'native-simple')
+    cpSync(defaultNativeRoot(), nativeRoot, { recursive: true })
+    const library = join(nativeRoot, 'linux-x64', 'libsimple.so')
+    const bytes = readFileSync(library)
+    bytes[bytes.length - 1] = bytes[bytes.length - 1]! ^ 0xff
+    writeFileSync(library, bytes)
+    expect(verifyTokenizer(nativeRoot, 'linux', 'x64')).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('linux-x64/libsimple.so'),
+    })
   })
 
   it('a fresh database opened read-only gains its index once the tokenizer is back', async () => {

@@ -14,10 +14,19 @@ import { fileURLToPath } from 'node:url'
 /** Upstream release vendored under `native/simple/`. */
 export const SIMPLE_VERSION = '0.7.1'
 
+/** The tokenizer binary vendored for each supported platform, relative to `native/simple/`. */
+const BINARY: Readonly<Record<string, string>> = Object.freeze({
+  'darwin-arm64': 'darwin-arm64/libsimple.dylib',
+  'darwin-x64': 'darwin-x64/libsimple.dylib',
+  // Upstream's Ubuntu 22.04 build, so this needs glibc 2.32 or newer.
+  'linux-x64': 'linux-x64/libsimple.so',
+})
+
 /** Pinned SHA-256 of every vendored file, relative to `native/simple/`. */
 export const PINNED_SHA256: Readonly<Record<string, string>> = Object.freeze({
   'darwin-arm64/libsimple.dylib': 'b5986159151ad95ccbf056ef8af22c7ae35112dbd081a96c047bb1720c66c9dc',
   'darwin-x64/libsimple.dylib': 'cb0b8cb102ab9680d2f5c0adac7dec15827904914250894623b2b9b14918d15d',
+  'linux-x64/libsimple.so': '53a267cda027e3ed19d24b78c1e0bb59aa752f971d6f3f571d5a0eebaa752151',
   'dict/README.md': '8bcc7c2ed7dff082d9a99c09de0bfd72249bf3b5c4298a3af328da40cbd8cfd1',
   'dict/hmm_model.utf8': 'f17790586ac86dd048c8adffed052c4bd2b28ed0682972c1275e59040c0589a7',
   'dict/idf.utf8': 'dbd1e03d72b2263cc8d84a4304ed77677eed9e7deaf43a1a5133bbba9733b535',
@@ -52,10 +61,10 @@ const sha256 = (file: string): string => createHash('sha256').update(readFileSyn
  * @param arch - defaults to the running process's architecture.
  */
 export function verifyTokenizer(root: string = defaultNativeRoot(), platform: string = process.platform, arch: string = process.arch): TokenizerCheck {
-  if (platform !== 'darwin' || (arch !== 'arm64' && arch !== 'x64')) {
-    return { ok: false, reason: `the search tokenizer ships for macOS only (this is ${platform}-${arch})` }
+  const binary = BINARY[`${platform}-${arch}`]
+  if (binary === undefined) {
+    return { ok: false, reason: `the search tokenizer ships for macOS (arm64 and x64) and Linux x64 only (this is ${platform}-${arch})` }
   }
-  const binary = `darwin-${arch}/libsimple.dylib`
   const files = [binary, ...Object.keys(PINNED_SHA256).filter((file) => file.startsWith('dict/'))]
   for (const file of files) {
     let actual: string

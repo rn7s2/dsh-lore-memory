@@ -5,7 +5,7 @@ A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin tha
 - **Lore**: rules you want followed in a workspace, such as "use pnpm, never npm". Lore changes only when you ask. The model gets the current lore every turn.
 - **Memory**: knowledge the agent keeps for itself (constraints, conventions, decisions, procedures, facts). The agent curates it freely. The model gets it once, when an agent starts.
 
-Both are searchable, in Chinese as well as English (jieba segmentation plus pinyin). macOS only.
+Both are searchable, in Chinese as well as English (jieba segmentation plus pinyin), on macOS and Linux x64.
 
 ## Install
 
@@ -14,6 +14,8 @@ git clone https://github.com/rn7s2/dsh-lore-memory.git
 ```
 
 Then ask the agent in DSH to install the bundle from that directory (Plugin Manager → `install_bundle` with the absolute path). The package ships its built `lib/` and the vendored tokenizer, so it has no install scripts and no runtime dependencies.
+
+On Linux x64, the tokenizer is upstream's Ubuntu 22.04 build, so it needs glibc 2.32 or newer (Ubuntu 22.04+, Debian 12+). Alpine and other musl-based distributions are not supported.
 
 ## Scopes
 
@@ -92,7 +94,7 @@ pnpm run check   # typecheck, tests, build, and verify the committed lib/ is fre
 
 The sources are in `src/`; `lib/index.js` (Host) and `lib/client.js` (browser module) are the committed esbuild output. The tests use temporary databases only.
 
-`native/simple/` vendors the unmodified macOS binaries and dictionary of [wangfenjin/simple](https://github.com/wangfenjin/simple) v0.7.1 (MIT, see `native/simple/LICENSE`). Their hashes are pinned in `src/tokenizer.ts`.
+`native/simple/` vendors the unmodified macOS and Linux x64 binaries and dictionary of [wangfenjin/simple](https://github.com/wangfenjin/simple) v0.7.1 (MIT, see `native/simple/LICENSE`). Their hashes are pinned in `src/tokenizer.ts`.
 
 ## License
 
