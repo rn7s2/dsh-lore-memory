@@ -9,7 +9,7 @@ import type {
   EntriesResult,
   EntryResult,
   Overview,
-  RemoveRequest,
+  DeleteRequest,
   UpdateRequest,
 } from '../remote.js'
 
@@ -24,7 +24,7 @@ interface Namespace {
   entries(request: EntriesRequest): Promise<RemoteResult<EntriesResult>>
   create(request: CreateRequest): Promise<RemoteResult<EntryResult>>
   update(request: UpdateRequest): Promise<RemoteResult<EntryResult>>
-  delete(request: RemoveRequest): Promise<RemoteResult<EntryResult>>
+  delete(request: DeleteRequest): Promise<RemoteResult<EntryResult>>
 }
 
 export interface LoreMemoryApi {
@@ -32,7 +32,7 @@ export interface LoreMemoryApi {
   entries(request: EntriesRequest): Promise<EntriesResult>
   create(request: CreateRequest): Promise<EntryResult>
   update(request: UpdateRequest): Promise<EntryResult>
-  remove(request: RemoveRequest): Promise<EntryResult>
+  delete(request: DeleteRequest): Promise<EntryResult>
 }
 
 /** A human-readable message for any thrown value. */
@@ -57,6 +57,6 @@ export function createApi(getService: () => unknown): LoreMemoryApi {
     entries: (request) => call('entries', request),
     create: (request) => call('create', request),
     update: (request) => call('update', request),
-    remove: (request) => call('delete', request),
+    delete: (request) => call('delete', request),
   }
 }

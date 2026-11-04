@@ -52,7 +52,8 @@ The plugin adds a **Lore & Memory** entry to the sidebar, directly under **Autom
 
 - A breadcrumb over absolute path prefixes, starting at **All scopes**, with the child folders and their subtree counts.
 - Two tabs, **Lore** and **Memory**, listing the entries stored at or below the selected prefix, with counts.
-- Add, edit, and delete in place; memory entries also pick a kind. A new entry lands in the selected folder, which defaults to the current prefix.
+- Add, edit, and delete in place; memory entries also pick a kind. The scope field suggests the known folders and accepts any absolute path whose folder exists, so a fresh profile can add its first entry; at **All scopes** it starts empty. Edits and deletes keep working for a folder that has since disappeared.
+- One view lists at most 500 entries; when it is truncated, the page says so and narrowing the scope shows the rest.
 
 This is the user's surface, so it edits any scope directly, including a parent folder, without the agent's approval step. It writes with `author = user` because the user performed the action; the agent's tools keep their own rules, including the approval for lore and the optional named workspace. A read-only or unavailable database is reported in a banner, and writes are disabled.
 

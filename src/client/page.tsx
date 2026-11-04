@@ -5,10 +5,10 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 
 import { MEMORY_KINDS, type Entry, type EntryType, type MemoryKind } from '../types.js'
-import type { CreateRequest, Overview, ScopeSummary } from '../remote.js'
+import { ENTRY_PAGE_SIZE, type CreateRequest, type Overview, type ScopeSummary } from '../remote.js'
 import { messageOf, type LoreMemoryApi } from './api.js'
 import { PAGE_CSS } from './page.css.js'
-import { childrenOf, crumbsOf, isUnder, lastSegment, totalsOf } from './paths.js'
+import { childrenOf, crumbsOf, isScopePath, isUnder, lastSegment, normalizeScope, totalsOf } from './paths.js'
 
 export interface PageProps {
   readonly api: LoreMemoryApi
@@ -69,6 +69,7 @@ export function LoreMemoryPage(props: PageProps) {
   const [tab, setTab] = useState<EntryType>('lore')
   const [entries, setEntries] = useState<readonly Entry[] | null>(null)
   const [entriesError, setEntriesError] = useState<string | null>(null)
+  const [truncated, setTruncated] = useState(false)
   const [composing, setComposing] = useState(false)
   const [draftText, setDraftText] = useState('')
   const [draftKind, setDraftKind] = useState<MemoryKind>('fact')
@@ -88,7 +89,11 @@ export function LoreMemoryPage(props: PageProps) {
         if (live) setOverview(next)
       },
       (error: unknown) => {
-        if (live) setOverviewError(messageOf(error))
+        if (!live) return
+        setOverviewError(messageOf(error))
+        setOverview(null)
+        setEntries(null)
+        setTruncated(false)
       },
     )
     return () => {
@@ -98,13 +103,22 @@ export function LoreMemoryPage(props: PageProps) {
 
   const overviewState = overview?.status.state
   useEffect(() => {
-    if (overviewState === undefined || overviewState === 'unavailable') return
+    if (overviewState === undefined) return
+    if (overviewState === 'unavailable') {
+      setEntries(null)
+      setEntriesError(null)
+      setTruncated(false)
+      return
+    }
     let live = true
     setEntries(null)
     setEntriesError(null)
+    setTruncated(false)
     void api.entries({ type: tab, prefix }).then(
       (result) => {
-        if (live) setEntries(result.entries)
+        if (!live) return
+        setEntries(result.entries)
+        setTruncated(result.truncated)
       },
       (error: unknown) => {
         if (live) setEntriesError(messageOf(error))
@@ -115,19 +129,35 @@ export function LoreMemoryPage(props: PageProps) {
     }
   }, [api, tab, prefix, overviewState, reload])
 
+  useEffect(() => {
+    if (entries === null) return
+    if (editingId !== null && !entries.some((entry) => entry.id === editingId)) {
+      setEditingId(null)
+      setActionError(null)
+    }
+    if (confirmId !== null && !entries.some((entry) => entry.id === confirmId)) setConfirmId(null)
+  }, [entries, editingId, confirmId])
+
   const scopes = overview?.scopes ?? EMPTY_SCOPES
   const known = useMemo(() => scopes.map((scope) => scope.path), [scopes])
   const totals = useMemo(() => totalsOf(scopes, prefix), [scopes, prefix])
   const folders = useMemo(() => childrenOf(scopes, prefix), [scopes, prefix])
   const crumbs = useMemo(() => crumbsOf(prefix), [prefix])
-  // A write always lands in exactly one folder; the current prefix is the
-  // default, and scopes below it stay reachable without leaving the view.
+  // Suggestions for the scope field: every known folder at the root, and the
+  // current prefix plus its descendants elsewhere. The field also accepts a
+  // typed absolute path, so a fresh profile can add its first entry.
   const scopeOptions = useMemo(
-    () => (prefix === '/' ? [] : [prefix, ...known.filter((path) => path !== prefix && isUnder(path, prefix))]),
+    () => (prefix === '/' ? known : [prefix, ...known.filter((path) => path !== prefix && isUnder(path, prefix))]),
     [known, prefix],
   )
   const readOnly = overview === null || overview.status.state !== 'ready'
-  const canAdd = overview !== null && overview.status.state === 'ready' && scopeOptions.length > 0
+  const canAdd = overview !== null && overview.status.state === 'ready'
+
+  const resetList = (): void => {
+    setEntries(null)
+    setEntriesError(null)
+    setTruncated(false)
+  }
 
   const go = (next: string): void => {
     setPrefix(next)
@@ -135,6 +165,7 @@ export function LoreMemoryPage(props: PageProps) {
     setEditingId(null)
     setConfirmId(null)
     setActionError(null)
+    resetList()
   }
 
   const switchTab = (next: EntryType): void => {
@@ -143,6 +174,7 @@ export function LoreMemoryPage(props: PageProps) {
     setEditingId(null)
     setConfirmId(null)
     setActionError(null)
+    resetList()
   }
 
   const startCompose = (): void => {
@@ -152,7 +184,7 @@ export function LoreMemoryPage(props: PageProps) {
     setActionError(null)
     setDraftText('')
     setDraftKind('fact')
-    setDraftScope(scopeOptions[0] ?? '')
+    setDraftScope(prefix === '/' ? '' : prefix)
   }
 
   const startEdit = (entry: Entry): void => {
@@ -172,12 +204,12 @@ export function LoreMemoryPage(props: PageProps) {
   }
 
   const saveNew = (): void => {
-    if (busy || draftScope === '' || draftText.trim() === '') return
+    if (busy || !isScopePath(draftScope) || draftText.trim() === '') return
     setBusy(true)
     setActionError(null)
     const request: CreateRequest = {
       type: tab,
-      scope: draftScope,
+      scope: normalizeScope(draftScope),
       text: draftText,
       ...(tab === 'memory' ? { kind: draftKind } : {}),
     }
@@ -198,7 +230,8 @@ export function LoreMemoryPage(props: PageProps) {
       scope: entry.scope,
       id: entry.id,
     }
-    if (editText.trim() !== entry.text) change.text = editText
+    const nextText = editText.trim()
+    if (nextText !== entry.text) change.text = nextText
     if (entry.type === 'memory' && editKind !== entry.kind) change.kind = editKind
     if (change.text === undefined && change.kind === undefined) {
       setEditingId(null)
@@ -215,11 +248,11 @@ export function LoreMemoryPage(props: PageProps) {
     ).finally(() => setBusy(false))
   }
 
-  const removeEntry = (entry: Entry): void => {
+  const deleteEntry = (entry: Entry): void => {
     if (busy) return
     setBusy(true)
     setActionError(null)
-    void api.remove({ type: entry.type, scope: entry.scope, id: entry.id }).then(
+    void api.delete({ type: entry.type, scope: entry.scope, id: entry.id }).then(
       () => {
         setConfirmId(null)
         setReload((value) => value + 1)
@@ -253,7 +286,7 @@ export function LoreMemoryPage(props: PageProps) {
           </div>
         </header>
 
-        {overviewError !== null && overview === null ? (
+        {overviewError !== null ? (
           <div className="lm-banner" role="status">
             <span className="lm-bannerTitle">{t('overview.error')}</span>
             <span>{overviewError}</span>
@@ -375,14 +408,21 @@ export function LoreMemoryPage(props: PageProps) {
             >
               <label className="lm-field">
                 <span className="lm-fieldLabel">{t('scope.pick')}</span>
-                <select className="lm-select" value={draftScope} disabled={busy} onChange={(event) => setDraftScope(event.target.value)}>
+                <input
+                  className="lm-input"
+                  list="lm-scope-options"
+                  value={draftScope}
+                  disabled={busy}
+                  placeholder={t('scope.placeholder')}
+                  onChange={(event) => setDraftScope(event.target.value)}
+                />
+                <datalist id="lm-scope-options">
                   {scopeOptions.map((path) => (
-                    <option key={path} value={path}>
-                      {path}
-                    </option>
+                    <option key={path} value={path} />
                   ))}
-                </select>
+                </datalist>
               </label>
+              {draftScope !== '' && !isScopePath(draftScope) ? <p className="lm-error">{t('scope.invalid')}</p> : null}
               {tab === 'memory' ? (
                 <KindField value={draftKind} disabled={busy} t={t} onChange={setDraftKind} />
               ) : null}
@@ -401,7 +441,7 @@ export function LoreMemoryPage(props: PageProps) {
               <p className="lm-hint">{t('scope.hint')}</p>
               {actionError !== null ? <p className="lm-error">{actionError}</p> : null}
               <div className="lm-actions">
-                <button type="submit" className="lm-button lm-accent" disabled={busy || draftText.trim() === '' || draftScope === ''}>
+                <button type="submit" className="lm-button lm-accent" disabled={busy || draftText.trim() === '' || !isScopePath(draftScope)}>
                   {busy ? t('saving') : t('save')}
                 </button>
                 <button type="button" className="lm-button" disabled={busy} onClick={closeEditors}>
@@ -414,8 +454,13 @@ export function LoreMemoryPage(props: PageProps) {
           {pageError ? <p className="lm-error lm-pageError">{actionError}</p> : null}
 
           {tab === 'memory' ? <p className="lm-hint lm-tabHint">{t('memory.note')}</p> : null}
+          {truncated ? (
+            <p className="lm-note">
+              {ENTRY_PAGE_SIZE} {t('list.truncated')}
+            </p>
+          ) : null}
 
-          {overviewError !== null && overview === null ? null : overview !== null && overview.status.state === 'unavailable' ? (
+          {overview !== null && overview.status.state === 'unavailable' ? (
             <p className="lm-note">{t('status.hint')}</p>
           ) : entriesError !== null ? (
             <div className="lm-empty" role="alert">
@@ -487,7 +532,7 @@ export function LoreMemoryPage(props: PageProps) {
                             {t('confirm.delete')} <span>{t('confirm.hint')}</span>
                           </p>
                           <div className="lm-actions">
-                            <button type="button" className="lm-button lm-danger" disabled={busy} onClick={() => removeEntry(entry)}>
+                            <button type="button" className="lm-button lm-danger" disabled={busy} onClick={() => deleteEntry(entry)}>
                               {t('confirm.yes')}
                             </button>
                             <button type="button" className="lm-button" disabled={busy} onClick={() => setConfirmId(null)}>

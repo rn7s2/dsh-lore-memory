@@ -36,7 +36,11 @@ export interface Overview {
 
 export interface EntriesResult {
   readonly entries: readonly Entry[]
+  readonly truncated: boolean
 }
+
+/** Most entries one page view returns; the page says so when it applies. */
+export const ENTRY_PAGE_SIZE = 500
 
 export interface EntryResult {
   readonly entry: Entry
@@ -62,7 +66,7 @@ export interface UpdateRequest {
   readonly kind?: MemoryKind
 }
 
-export interface RemoveRequest {
+export interface DeleteRequest {
   readonly type: EntryType
   readonly scope: string
   readonly id: number
@@ -128,13 +132,25 @@ function entryTypeOf(value: unknown): EntryType {
   return value
 }
 
-/** An absolute folder path, without trailing slashes (except the root itself). */
-function pathOf(value: unknown, field: string): string {
+/** A normalised absolute path prefix; `/` selects every scope. */
+function prefixOf(value: unknown, field: string): string {
   if (typeof value !== 'string' || value.length === 0) throw new TypeError(`${field} must be a non-empty absolute path`)
   if (!value.startsWith('/')) throw new TypeError(`${field} must be an absolute path`)
+  if (/[\u0000-\u001f\u007f]/.test(value)) throw new TypeError(`${field} contains control characters`)
   const trimmed = value.length > 1 ? value.replace(/\/+$/, '') : value
-  if (trimmed.split('/').includes('..')) throw new TypeError(`${field} must not contain ".."`)
-  return trimmed === '' ? '/' : trimmed
+  if (trimmed === '/') return trimmed
+  const segments = trimmed.split('/').slice(1)
+  if (segments.some((segment) => segment === '' || segment === '.' || segment === '..')) {
+    throw new TypeError(`${field} must not contain empty, "." or ".." segments`)
+  }
+  return trimmed
+}
+
+/** A writable scope: a prefix that names a folder, never the filesystem root. */
+function scopeOf(value: unknown, field: string): string {
+  const scope = prefixOf(value, field)
+  if (scope === '/') throw new TypeError(`${field} must name a folder, not the filesystem root`)
+  return scope
 }
 
 function textOf(value: unknown): string {
@@ -165,7 +181,7 @@ function optionalKindOf(type: EntryType, value: unknown): MemoryKind | undefined
 
 const entriesRequest = codec<EntriesRequest>('EntriesRequest', (value) => {
   const object = strictObject(value, ['type', 'prefix'])
-  return { type: entryTypeOf(required(object['type'], 'type')), prefix: pathOf(required(object['prefix'], 'prefix'), 'prefix') }
+  return { type: entryTypeOf(required(object['type'], 'type')), prefix: prefixOf(required(object['prefix'], 'prefix'), 'prefix') }
 })
 
 const createRequest = codec<CreateRequest>('CreateRequest', (value) => {
@@ -174,7 +190,7 @@ const createRequest = codec<CreateRequest>('CreateRequest', (value) => {
   const kind = kindOf(type, object['kind'])
   return {
     type,
-    scope: pathOf(required(object['scope'], 'scope'), 'scope'),
+    scope: scopeOf(required(object['scope'], 'scope'), 'scope'),
     text: textOf(required(object['text'], 'text')),
     ...(kind === null ? {} : { kind }),
   }
@@ -189,18 +205,18 @@ const updateRequest = codec<UpdateRequest>('UpdateRequest', (value) => {
   if (text === undefined && kind === undefined) throw new TypeError('nothing to change: give text or kind')
   return {
     type,
-    scope: pathOf(required(object['scope'], 'scope'), 'scope'),
+    scope: scopeOf(required(object['scope'], 'scope'), 'scope'),
     id,
     ...(text === undefined ? {} : { text }),
     ...(kind === undefined ? {} : { kind }),
   }
 })
 
-const removeRequest = codec<RemoveRequest>('RemoveRequest', (value) => {
+const deleteRequest = codec<DeleteRequest>('DeleteRequest', (value) => {
   const object = strictObject(value, ['type', 'scope', 'id'])
   return {
     type: entryTypeOf(required(object['type'], 'type')),
-    scope: pathOf(required(object['scope'], 'scope'), 'scope'),
+    scope: scopeOf(required(object['scope'], 'scope'), 'scope'),
     id: idOf(required(object['id'], 'id')),
   }
 })
@@ -247,7 +263,7 @@ export function buildDescriptors(): RemoteDescriptor[] {
     directMethod('entries', [parameter('request', entriesRequest)], entriesResult),
     directMethod('create', [parameter('request', createRequest)], entryResult),
     directMethod('update', [parameter('request', updateRequest)], entryResult),
-    directMethod('delete', [parameter('request', removeRequest)], entryResult),
+    directMethod('delete', [parameter('request', deleteRequest)], entryResult),
   ]
 }
 

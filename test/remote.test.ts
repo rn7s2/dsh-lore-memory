@@ -1,11 +1,13 @@
+import { symlinkSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { LoreMemoryAdmin } from '../src/admin.js'
 import { activate } from '../src/index.js'
 import { PANEL_ID, buildContribution, buildDescriptors } from '../src/remote.js'
 import { en, zh } from '../src/client/locale.js'
-import { childrenOf, crumbsOf, lastSegment, totalsOf } from '../src/client/paths.js'
+import { childrenOf, crumbsOf, isScopePath, lastSegment, normalizeScope, totalsOf } from '../src/client/paths.js'
 import { FAST_RETRY, FakeHost, tempDir, workspaces } from './helpers.js'
 
 const hosts: FakeHost[] = []
@@ -89,6 +91,11 @@ describe('Remote descriptors', () => {
     expect(() => parseCreate({ type: 'lore', scope: 'work', text: 'x' })).toThrow(/absolute path/)
     expect(() => parseCreate({ type: 'lore', scope: '/work', text: 'x', extra: true })).toThrow(/unexpected field/)
     expect(() => parseCreate({ type: 'other', scope: '/work', text: 'x' })).toThrow(/type must be/)
+    expect((parseCreate({ type: 'lore', scope: '/work/', text: 'x' }) as { scope: string }).scope).toBe('/work')
+    expect(() => parseCreate({ type: 'lore', scope: '/', text: 'x' })).toThrow(/filesystem root/)
+    expect(() => parseCreate({ type: 'lore', scope: '/work//x', text: 'x' })).toThrow(/empty/)
+    expect(() => parseCreate({ type: 'lore', scope: '/work/./x', text: 'x' })).toThrow(/segments/)
+    expect(() => parseCreate({ type: 'lore', scope: '/work\u0000x', text: 'x' })).toThrow(/control/)
     expect(parseUpdate({ type: 'memory', scope: '/work', id: 1, text: 'changed' })).toEqual({
       type: 'memory',
       scope: '/work',
@@ -155,6 +162,36 @@ describe('management service', () => {
     expect((await service.overview()).total).toEqual({ lore: 0, memory: 2 })
   })
 
+  it('bounds one entry page and reports the truncation', async () => {
+    const rows = Array.from({ length: 501 }, (_, index) => ({
+      id: index + 1,
+      type: 'lore',
+      scope: '/work',
+      kind: null,
+      text: `entry ${index}`,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    }))
+    const admin = new LoreMemoryAdmin(
+      Promise.resolve({ status: () => ({ state: 'ready', dbPath: '/tmp/db' }), listUnderAsync: async () => rows } as any),
+    )
+    const page = await admin.entries({ type: 'lore', prefix: '/' })
+    expect(page.entries).toHaveLength(500)
+    expect(page.truncated).toBe(true)
+  })
+
+  it('canonicalises the folder a new entry is written to', async () => {
+    const root = tempDir()
+    const { work } = workspaces(root)
+    const link = join(root, 'linked-work')
+    symlinkSync(work, link)
+    const { host, opened } = setup(root)
+    await opened.store
+    const service = host.provided.get('loreMemory') as any
+    const created = await service.create({ type: 'lore', scope: link, text: 'Written through a symlink.' })
+    expect(created.entry.scope).toBe(work)
+  })
+
   it('reports store failures with a stable code', async () => {
     const root = tempDir()
     const { work } = workspaces(root)
@@ -166,6 +203,9 @@ describe('management service', () => {
       message: expect.stringContaining('kind'),
     })
     await expect(service.delete({ type: 'lore', scope: work, id: 99 })).rejects.toMatchObject({ code: 'lore-memory/not-found' })
+    await expect(service.create({ type: 'lore', scope: join(root, 'missing'), text: 'typo' })).rejects.toMatchObject({
+      code: 'lore-memory/invalid-scope',
+    })
   })
 })
 
@@ -187,6 +227,16 @@ describe('page path arithmetic', () => {
       ['/work/acme/deep', 0, 4],
     ])
     expect(childrenOf(scopes, '/work/acme/deep')).toEqual([])
+  })
+
+  it('validates a typed scope path', () => {
+    expect(isScopePath('/work/acme')).toBe(true)
+    expect(isScopePath('/work/')).toBe(true)
+    expect(isScopePath('/')).toBe(false)
+    expect(isScopePath('work')).toBe(false)
+    expect(isScopePath('/work//x')).toBe(false)
+    expect(isScopePath('/work/./x')).toBe(false)
+    expect(normalizeScope('/work///')).toBe('/work')
   })
 
   it('builds breadcrumbs and totals', () => {

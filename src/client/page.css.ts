@@ -145,7 +145,7 @@ export const PAGE_CSS = `
 .lm-compose { display: flex; flex-direction: column; gap: 10px; margin: 0 0 18px; padding: 14px; border: 0.5px solid var(--dsw-alias-border-l1); border-radius: 16px; background: var(--dsw-alias-bg-layer-1); }
 .lm-field { display: flex; flex-direction: column; gap: 5px; }
 .lm-fieldLabel { color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 18px; }
-.lm-select, .lm-textarea {
+.lm-select, .lm-input, .lm-textarea {
   width: 100%;
   padding: 8px 10px;
   border: 0.5px solid var(--dsw-alias-border-l1);
@@ -156,9 +156,9 @@ export const PAGE_CSS = `
   font-size: 13px;
   line-height: 20px;
 }
-.lm-select { height: 34px; padding: 0 8px; }
+.lm-select, .lm-input { height: 34px; padding: 0 8px; }
 .lm-textarea { min-height: 84px; resize: vertical; field-sizing: content; }
-.lm-select:hover, .lm-textarea:hover { border-color: var(--dsw-alias-border-l2); }
+.lm-select:hover, .lm-input:hover, .lm-textarea:hover { border-color: var(--dsw-alias-border-l2); }
 .lm-hint { margin: 0; color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 18px; }
 .lm-error { margin: 0; color: var(--dsw-alias-state-error-primary); font-size: 12px; line-height: 18px; }
 .lm-pageError { margin: 0 0 12px; }

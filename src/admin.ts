@@ -5,17 +5,21 @@
  * rule anywhere, including a parent folder that a session can only read. The
  * agent's tools keep their workspace rules; this surface is the user's.
  */
+import { stat } from 'node:fs/promises'
+
 import { StoreError, errorMessage } from './errors.js'
 import {
+  ENTRY_PAGE_SIZE,
   NAMESPACE,
   type CreateRequest,
   type EntriesRequest,
   type EntriesResult,
   type EntryResult,
   type Overview,
-  type RemoveRequest,
+  type DeleteRequest,
   type UpdateRequest,
 } from './remote.js'
+import { canonicalWorkspace } from './scope.js'
 import type { LoreMemoryStore } from './store.js'
 
 /** A failure the gateway forwards to the browser with its code intact. */
@@ -73,17 +77,27 @@ export class LoreMemoryAdmin {
     }
   }
 
-  /** The entries of one type at and below `prefix`. */
+  /** The entries of one type at and below `prefix`, bounded by one page. */
   async entries(request: EntriesRequest): Promise<EntriesResult> {
     const store = await this.store
-    return { entries: await attempt(() => store.listUnderAsync(request.type, request.prefix)) }
+    const rows = await attempt(() => store.listUnderAsync(request.type, request.prefix, ENTRY_PAGE_SIZE + 1))
+    return { entries: rows.slice(0, ENTRY_PAGE_SIZE), truncated: rows.length > ENTRY_PAGE_SIZE }
   }
 
-  /** Add one entry to `scope`. */
+  /**
+   * Add one entry to `scope`. The folder must exist: a typo in the page's
+   * scope field would otherwise confirm a write that no session can ever read.
+   * Updates and deletes keep working for folders that have since disappeared.
+   */
   async create(request: CreateRequest): Promise<EntryResult> {
     const store = await this.store
+    const scope = await canonicalWorkspace(request.scope)
+    const folder = await stat(scope).catch(() => undefined)
+    if (folder === undefined || !folder.isDirectory()) {
+      throw new AdminError('lore-memory/invalid-scope', `${request.scope} is not an existing folder; nothing was changed`)
+    }
     const entry = await attempt(() =>
-      store.add(request.type, request.scope, request.text, request.kind ?? null, { author: 'user' }),
+      store.add(request.type, scope, request.text, request.kind ?? null, { author: 'user' }),
     )
     return { entry }
   }
@@ -98,7 +112,7 @@ export class LoreMemoryAdmin {
   }
 
   /** Delete one entry owned by `scope`. */
-  async remove(request: RemoveRequest): Promise<EntryResult> {
+  async remove(request: DeleteRequest): Promise<EntryResult> {
     const store = await this.store
     return { entry: await attempt(() => store.remove(request.type, request.scope, request.id)) }
   }
@@ -109,7 +123,7 @@ interface RemoteService {
   entries(request: EntriesRequest): Promise<EntriesResult>
   create(request: CreateRequest): Promise<EntryResult>
   update(request: UpdateRequest): Promise<EntryResult>
-  delete(request: RemoveRequest): Promise<EntryResult>
+  delete(request: DeleteRequest): Promise<EntryResult>
   readonly typertRemote: { readonly service: RemoteService; readonly serviceKey: string; readonly namespace: string }
 }
 
@@ -120,7 +134,7 @@ export function createRemoteService(admin: LoreMemoryAdmin): RemoteService {
     entries: (request: EntriesRequest) => admin.entries(request),
     create: (request: CreateRequest) => admin.create(request),
     update: (request: UpdateRequest) => admin.update(request),
-    delete: (request: RemoveRequest) => admin.remove(request),
+    delete: (request: DeleteRequest) => admin.remove(request),
   } as unknown as RemoteService
   Object.defineProperty(service, 'typertRemote', {
     value: Object.freeze({ service, serviceKey: NAMESPACE, namespace: NAMESPACE }),

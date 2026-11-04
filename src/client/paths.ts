@@ -48,6 +48,20 @@ export function totalsOf(scopes: readonly ScopeSummary[], prefix: string): { lor
   return { lore, memory }
 }
 
+/** An absolute path with any trailing slashes removed. */
+export function normalizeScope(value: string): string {
+  const trimmed = value.trim()
+  return trimmed.length > 1 ? trimmed.replace(/\/+$/, '') : trimmed
+}
+
+/** Whether `value` names one concrete folder: absolute, normalised, and not the root. */
+export function isScopePath(value: string): boolean {
+  const scope = normalizeScope(value)
+  if (scope === '/' || !scope.startsWith('/') || /[\u0000-\u001f\u007f]/.test(scope)) return false
+  const segments = scope.split('/').slice(1)
+  return segments.length > 0 && segments.every((segment) => segment !== '' && segment !== '.' && segment !== '..')
+}
+
 /** The last path component, for a compact folder chip. */
 export function lastSegment(path: string): string {
   if (path === '/') return '/'
