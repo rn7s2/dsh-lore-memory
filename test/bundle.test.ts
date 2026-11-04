@@ -34,7 +34,7 @@ describe('built bundle', () => {
 
   it('declares the bundle manifest, display metadata, and shipped files', () => {
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
-    expect(pkg.version).toBe('0.3.1')
+    expect(pkg.version).toBe('0.4.0')
     expect(pkg.os).toEqual(['darwin', 'linux'])
     expect(pkg.dsh.bundle.patch).toBe('./cordis.patch.yml')
     expect(pkg.dsh.client).toEqual({ platform: 'web', inject: ['@deepseek-ai/dsh-api-gateway', '@deepseek-ai/dsh-client-locale'] })
