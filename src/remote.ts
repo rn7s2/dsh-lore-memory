@@ -329,6 +329,10 @@ function parameter(name: string, description: string, spec: StrictCodec<unknown>
 /**
  * Build the descriptors for the five page operations. Order is stable so the
  * contribution and Host registration are identical in every process.
+ *
+ * Method names must not shadow a member of the gateway's namespace service
+ * (`remove`, `has`, `install`, `namespace`, …): `ctx.remote.$mount` rejects
+ * such a name outright, so the delete operation is exposed as `delete`.
  */
 export function buildDescriptors(): RemoteDescriptor[] {
   return [
@@ -357,7 +361,7 @@ export function buildDescriptors(): RemoteDescriptor[] {
       entryResult,
     ),
     directMethod(
-      'remove',
+      'delete',
       'Delete one entry owned by the scope named by its absolute path.',
       [parameter('request', 'the entry to delete.', removeRequest)],
       entryResult,

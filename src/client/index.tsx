@@ -57,7 +57,16 @@ export function LoreMemoryIcon({ size }: { size?: number }) {
 
 export async function apply(context: unknown): Promise<() => Promise<void>> {
   const ctx = context as ClientContext
-  const disposeRemote = await ctx.remote.$mount(buildContribution())
+  // A failed mount must not take the whole Web app down: the desktop host
+  // treats a rejected client entry as a fatal boot error. Without the page the
+  // rest of Harness still works, and the console names the reason.
+  let disposeRemote: () => Promise<void>
+  try {
+    disposeRemote = await ctx.remote.$mount(buildContribution())
+  } catch (error) {
+    console.error('dsh-lore-memory: the management page Remote could not be mounted; the page is unavailable', error)
+    return async () => undefined
+  }
   const disposeLocale = ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'lore-memory: page dictionary')
   const t = ctx.locale.bind(NS)
   const api = createApi(() => ctx.get(`remote.${NAMESPACE}`))

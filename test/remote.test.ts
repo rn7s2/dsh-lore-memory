@@ -32,7 +32,7 @@ describe('Remote descriptors', () => {
       'loreMemory/entries',
       'loreMemory/create',
       'loreMemory/update',
-      'loreMemory/remove',
+      'loreMemory/delete',
     ])
     for (const descriptor of descriptors) {
       expect(descriptor.id).toBe(`dsh-lore-memory#${descriptor.namespace}/${descriptor.method}`)
@@ -49,6 +49,28 @@ describe('Remote descriptors', () => {
     }
     expect(buildContribution().package).toBe('dsh-lore-memory')
     expect(PANEL_ID).toBe('lore-memory')
+  })
+
+  it('keeps method names clear of the gateway namespace service', () => {
+    // `ctx.remote.$mount` rejects a method that shadows RemoteNamespaceService.
+    // Its own `remove` broke the 0.3.0 client boot, so the delete operation is
+    // exposed as `delete`.
+    const reserved = new Set([
+      'ctx',
+      'empty',
+      'invokeRemote',
+      'methods',
+      'name',
+      'namespace',
+      'assertMethodAvailable',
+      'has',
+      'install',
+      'installDirect',
+      'installScoped',
+      'remove',
+      'constructor',
+    ])
+    for (const descriptor of descriptors) expect(reserved.has(descriptor.method)).toBe(false)
   })
 
   it('validates create and update input at the boundary', () => {
@@ -99,7 +121,7 @@ describe('management service', () => {
       'entries',
       'create',
       'update',
-      'remove',
+      'delete',
     ])
   })
 
@@ -129,7 +151,7 @@ describe('management service', () => {
     // The page may change a parent entry: it names that parent as the scope.
     const updated = await service.update({ type: 'lore', scope: work, id: created.entry.id, text: 'Use pnpm only.' })
     expect(updated.entry.text).toBe('Use pnpm only.')
-    const removed = await service.remove({ type: 'lore', scope: work, id: created.entry.id })
+    const removed = await service.delete({ type: 'lore', scope: work, id: created.entry.id })
     expect(removed.entry.id).toBe(created.entry.id)
     expect((await service.overview()).total).toEqual({ lore: 0, memory: 2 })
   })
@@ -144,7 +166,7 @@ describe('management service', () => {
       code: 'lore-memory/invalid',
       message: expect.stringContaining('kind'),
     })
-    await expect(service.remove({ type: 'lore', scope: work, id: 99 })).rejects.toMatchObject({ code: 'lore-memory/not-found' })
+    await expect(service.delete({ type: 'lore', scope: work, id: 99 })).rejects.toMatchObject({ code: 'lore-memory/not-found' })
   })
 })
 

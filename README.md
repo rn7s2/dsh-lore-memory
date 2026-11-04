@@ -56,7 +56,7 @@ The plugin adds a **Lore & Memory** entry to the sidebar, directly under **Autom
 
 This is the user's surface, so it edits any scope directly, including a parent folder, without the agent's approval step. It writes with `author = user` because the user performed the action; the agent's tools keep their own rules, including the approval for lore and the optional named workspace. A read-only or unavailable database is reported in a banner, and writes are disabled.
 
-The page and the Host share one Remote specification (`src/remote.ts`): the browser mounts five operations (`overview`, `entries`, `create`, `update`, `remove`) under `ctx.remote.loreMemory`, and the Host registers the same descriptors at activation. Every browser-supplied field is checked by a strict codec before it reaches the store.
+The page and the Host share one Remote specification (`src/remote.ts`): the browser mounts five operations (`overview`, `entries`, `create`, `update`, `delete`) under `ctx.remote.loreMemory`, and the Host registers the same descriptors at activation. Every browser-supplied field is checked by a strict codec before it reaches the store.
 
 ## Configuration
 
