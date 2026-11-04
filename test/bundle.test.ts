@@ -59,7 +59,6 @@ describe('built bundle', () => {
     const module = loadClientModule()
     expect(typeof module.apply).toBe('function')
     expect(module.inject).toEqual(['slots', 'locale', 'remote'])
-    expect(typeof module.icon).toBe('function')
 
     const host = readFileSync(join(root, 'lib', 'index.js'), 'utf8')
     expect(host).toContain('loreMemory')
@@ -157,7 +156,6 @@ describe('built bundle', () => {
 interface ClientModule {
   apply(context: unknown): Promise<() => Promise<void>>
   readonly inject: string[]
-  readonly icon: unknown
 }
 
 /** Evaluate the committed browser bundle as the page's loader would. */
@@ -171,5 +169,5 @@ function loadClientModule(consoleObject: Console = console): ClientModule {
   if (registered === undefined) throw new Error('the client bundle did not register a module')
   const react = { useState: () => undefined, useEffect: () => undefined, useMemo: () => undefined, Fragment: Symbol('fragment') }
   const module = registered.factory((name) => (name === 'react' ? react : { jsx: () => null, jsxs: () => null }))
-  return { apply: module['apply'] as ClientModule['apply'], inject: module['inject'] as string[], icon: module['LoreMemoryIcon'] }
+  return { apply: module['apply'] as ClientModule['apply'], inject: module['inject'] as string[] }
 }

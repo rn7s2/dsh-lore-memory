@@ -96,8 +96,9 @@ export function LoreMemoryPage(props: PageProps) {
     }
   }, [api, reload])
 
+  const overviewState = overview?.status.state
   useEffect(() => {
-    if (overview === null || overview.status.state === 'unavailable') return
+    if (overviewState === undefined || overviewState === 'unavailable') return
     let live = true
     setEntries(null)
     setEntriesError(null)
@@ -112,7 +113,7 @@ export function LoreMemoryPage(props: PageProps) {
     return () => {
       live = false
     }
-  }, [api, tab, prefix, overview, reload])
+  }, [api, tab, prefix, overviewState, reload])
 
   const scopes = overview?.scopes ?? EMPTY_SCOPES
   const known = useMemo(() => scopes.map((scope) => scope.path), [scopes])

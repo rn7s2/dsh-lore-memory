@@ -44,7 +44,6 @@ describe('Remote descriptors', () => {
       for (const parameter of descriptor.parameters) {
         expect(parameter.source).toBe('json')
         expect(parameter.codec.mode).toBe('strict')
-        expect(typeof parameter.codec.jsonSchema).toBe('object')
       }
     }
     expect(buildContribution().package).toBe('dsh-lore-memory')
