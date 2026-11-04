@@ -1,6 +1,6 @@
 {
   "name": "dsh-lore-memory",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "private": false,
   "description": "Per-workspace lore (the user's rules, shown every turn) and memory (the agent's own notes, loaded once per agent) for DeepSeek Harness, searchable in Chinese and English, with a page that manages every scope.",
   "license": "MIT",
