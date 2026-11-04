@@ -49,6 +49,8 @@ export interface EntryResult {
 export interface EntriesRequest {
   readonly type: EntryType
   readonly prefix: string
+  /** Search terms; when present the result is ranked by bm25 instead of listed by scope. */
+  readonly query?: string
 }
 
 export interface CreateRequest {
@@ -158,6 +160,13 @@ function textOf(value: unknown): string {
   return value.trim()
 }
 
+function searchQueryOf(value: unknown): string {
+  if (typeof value !== 'string') throw new TypeError('query must be a string')
+  const query = value.trim()
+  if (query.length > 500) throw new TypeError('query must be at most 500 characters')
+  return query
+}
+
 function idOf(value: unknown): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) throw new TypeError('id must be a positive integer')
   return value
@@ -180,8 +189,13 @@ function optionalKindOf(type: EntryType, value: unknown): MemoryKind | undefined
 }
 
 const entriesRequest = codec<EntriesRequest>('EntriesRequest', (value) => {
-  const object = strictObject(value, ['type', 'prefix'])
-  return { type: entryTypeOf(required(object['type'], 'type')), prefix: prefixOf(required(object['prefix'], 'prefix'), 'prefix') }
+  const object = strictObject(value, ['type', 'prefix', 'query'])
+  const query = object['query'] === undefined ? undefined : searchQueryOf(object['query'])
+  return {
+    type: entryTypeOf(required(object['type'], 'type')),
+    prefix: prefixOf(required(object['prefix'], 'prefix'), 'prefix'),
+    ...(query === undefined || query === '' ? {} : { query }),
+  }
 })
 
 const createRequest = codec<CreateRequest>('CreateRequest', (value) => {

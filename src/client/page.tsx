@@ -10,9 +10,11 @@ import { messageOf, type LoreMemoryApi } from './api.js'
 import { PAGE_CSS } from './page.css.js'
 import { childrenOf, crumbsOf, isScopePath, isUnder, lastSegment, normalizeScope, totalsOf } from './paths.js'
 
+export type Translate = (key: string, params?: Record<string, string | number>) => string
+
 export interface PageProps {
   readonly api: LoreMemoryApi
-  readonly t?: (key: string) => string
+  readonly t?: Translate
 }
 
 const EMPTY_SCOPES: readonly ScopeSummary[] = []
@@ -27,7 +29,7 @@ function formatTime(iso: string): string {
 interface KindFieldProps {
   readonly value: MemoryKind
   readonly disabled: boolean
-  readonly t: (key: string) => string
+  readonly t: Translate
   readonly onChange: (kind: MemoryKind) => void
 }
 
@@ -53,7 +55,7 @@ function KindField({ value, disabled, t, onChange }: KindFieldProps) {
 
 export function LoreMemoryPage(props: PageProps) {
   const api = props.api
-  const t = props.t ?? ((key: string): string => key)
+  const t: Translate = props.t ?? ((key: string): string => key)
   const [overview, setOverview] = useState<Overview | null>(null)
   const [overviewError, setOverviewError] = useState<string | null>(null)
   const [reload, setReload] = useState(0)
@@ -72,6 +74,8 @@ export function LoreMemoryPage(props: PageProps) {
   const [confirmId, setConfirmId] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [searchDraft, setSearchDraft] = useState('')
+  const [query, setQuery] = useState('')
   const scopeInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -107,7 +111,7 @@ export function LoreMemoryPage(props: PageProps) {
     setEntries(null)
     setEntriesError(null)
     setTruncated(false)
-    void api.entries({ type: tab, prefix }).then(
+    void api.entries({ type: tab, prefix, ...(query === '' ? {} : { query }) }).then(
       (result) => {
         if (!live) return
         setEntries(result.entries)
@@ -120,7 +124,17 @@ export function LoreMemoryPage(props: PageProps) {
     return () => {
       live = false
     }
-  }, [api, tab, prefix, overviewState, reload])
+  }, [api, tab, prefix, query, overviewState, reload])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setQuery(searchDraft.trim()), 250)
+    return () => window.clearTimeout(timer)
+  }, [searchDraft])
+
+  const clearSearch = (): void => {
+    setSearchDraft('')
+    setQuery('')
+  }
 
   useEffect(() => {
     if (!composing) return
@@ -221,6 +235,7 @@ export function LoreMemoryPage(props: PageProps) {
         // Show the folder the entry landed in, which may differ from the
         // prefix the form opened on.
         setPrefix(result.entry.scope)
+        clearSearch()
         resetList()
         setReload((value) => value + 1)
       },
@@ -355,6 +370,7 @@ export function LoreMemoryPage(props: PageProps) {
           </div>
         ) : null}
 
+        <div className="lm-toolbar">
         <div
           className="lm-tabs"
           role="tablist"
@@ -394,6 +410,29 @@ export function LoreMemoryPage(props: PageProps) {
             {t('tabs.memory')}
             <span className="lm-count">{totals.memory}</span>
           </button>
+        </div>
+        <div className="lm-search">
+          <SearchGlyph />
+          <input
+            className="lm-searchInput"
+            type="search"
+            value={searchDraft}
+            placeholder={t(tab === 'lore' ? 'search.lore' : 'search.memory')}
+            aria-label={t(tab === 'lore' ? 'search.lore' : 'search.memory')}
+            onChange={(event) => setSearchDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== 'Escape' || searchDraft === '') return
+              event.preventDefault()
+              event.stopPropagation()
+              clearSearch()
+            }}
+          />
+          {searchDraft === '' ? null : (
+            <button type="button" className="lm-searchClear" aria-label={t('search.clear')} onClick={clearSearch}>
+              <CloseGlyph />
+            </button>
+          )}
+        </div>
         </div>
 
         <div className="lm-panel" id="lm-panel" role="tabpanel" aria-labelledby={tab === 'lore' ? 'lm-tab-lore' : 'lm-tab-memory'}>
@@ -459,6 +498,11 @@ export function LoreMemoryPage(props: PageProps) {
               {ENTRY_PAGE_SIZE} {t('list.truncated')}
             </p>
           ) : null}
+          {query !== '' && entries !== null && entries.length > 0 ? (
+            <p className="lm-searchMeta" role="status">
+              {t('search.results', { count: entries.length })}
+            </p>
+          ) : null}
 
           {overview !== null && overview.status.state === 'unavailable' ? (
             <p className="lm-note">{t('status.hint')}</p>
@@ -473,16 +517,22 @@ export function LoreMemoryPage(props: PageProps) {
               </div>
             </div>
           ) : entries === null ? (
-            <p className="lm-note">{t('list.loading')}</p>
+            <p className="lm-note">{query !== '' ? t('search.searching') : t('list.loading')}</p>
           ) : entries.length === 0 ? (
-            <div className="lm-empty">
-              <p className="lm-emptyTitle">{t(tab === 'lore' ? 'list.empty.lore' : 'list.empty.memory')}</p>
-              {overview !== null && overview.total.lore + overview.total.memory === 0 ? (
-                <p>{t('empty.body')}</p>
-              ) : (
-                <p>{t(tab === 'lore' ? 'empty.loreHint' : 'empty.memoryHint')}</p>
-              )}
-            </div>
+            query !== '' ? (
+              <div className="lm-empty">
+                <p className="lm-emptyTitle">{t('search.empty', { query })}</p>
+              </div>
+            ) : (
+              <div className="lm-empty">
+                <p className="lm-emptyTitle">{t(tab === 'lore' ? 'list.empty.lore' : 'list.empty.memory')}</p>
+                {overview !== null && overview.total.lore + overview.total.memory === 0 ? (
+                  <p>{t('empty.body')}</p>
+                ) : (
+                  <p>{t(tab === 'lore' ? 'empty.loreHint' : 'empty.memoryHint')}</p>
+                )}
+              </div>
+            )
           ) : (
             <ul className="lm-list">
               {entries.map((entry) => (
@@ -494,27 +544,46 @@ export function LoreMemoryPage(props: PageProps) {
                     </button>
                     {entry.kind === null ? null : <span className="lm-badge">{t(`kind.${entry.kind}`)}</span>}
                     <div className="lm-entryMeta">
-                      <span className="lm-updated">
-                        {t('updated')} {formatTime(entry.updatedAt)}
-                      </span>
-                      {editingId === entry.id || confirmId === entry.id ? null : (
-                        <div className="lm-entryActions">
-                          <button type="button" className="lm-link" disabled={busy || readOnly} onClick={() => startEdit(entry)}>
-                            {t('edit')}
-                          </button>
+                      {confirmId === entry.id ? (
+                        <div className="lm-inlineConfirm" role="alert">
+                          <span title={t('confirm.hint')}>{t('confirm.delete')}</span>
                           <button
                             type="button"
-                            className="lm-link lm-linkDanger"
-                            disabled={busy || readOnly}
-                            onClick={() => {
-                              setConfirmId(entry.id)
-                              setEditingId(null)
-                              setActionError(null)
-                            }}
+                            className="lm-button lm-danger lm-buttonSm"
+                            disabled={busy}
+                            onClick={() => deleteEntry(entry)}
                           >
-                            {t('delete')}
+                            {t('confirm.yes')}
+                          </button>
+                          <button type="button" className="lm-button lm-buttonSm" disabled={busy} onClick={() => setConfirmId(null)}>
+                            {t('cancel')}
                           </button>
                         </div>
+                      ) : (
+                        <>
+                          <span className="lm-updated">
+                            {t('updated')} {formatTime(entry.updatedAt)}
+                          </span>
+                          {editingId === entry.id ? null : (
+                            <div className="lm-entryActions">
+                              <button type="button" className="lm-link" disabled={busy || readOnly} onClick={() => startEdit(entry)}>
+                                {t('edit')}
+                              </button>
+                              <button
+                                type="button"
+                                className="lm-link lm-linkDanger"
+                                disabled={busy || readOnly}
+                                onClick={() => {
+                                  setConfirmId(entry.id)
+                                  setEditingId(null)
+                                  setActionError(null)
+                                }}
+                              >
+                                {t('delete')}
+                              </button>
+                            </div>
+                          )}
+                        </>
                       )}
                     </div>
                   </div>
@@ -546,24 +615,7 @@ export function LoreMemoryPage(props: PageProps) {
                       </div>
                     </div>
                   ) : (
-                    <>
-                      <p className="lm-text">{entry.text}</p>
-                      {confirmId === entry.id ? (
-                        <div className="lm-confirm" role="alert">
-                          <p>
-                            {t('confirm.delete')} <span>{t('confirm.hint')}</span>
-                          </p>
-                          <div className="lm-formActions">
-                            <button type="button" className="lm-button lm-danger" disabled={busy} onClick={() => deleteEntry(entry)}>
-                              {t('confirm.yes')}
-                            </button>
-                            <button type="button" className="lm-button" disabled={busy} onClick={() => setConfirmId(null)}>
-                              {t('cancel')}
-                            </button>
-                          </div>
-                        </div>
-                      ) : null}
-                    </>
+                    <EntryText text={entry.text} t={t} />
                   )}
                 </li>
               ))}
@@ -572,6 +624,60 @@ export function LoreMemoryPage(props: PageProps) {
         </div>
       </div>
     </div>
+  )
+}
+
+/** Clamp a long entry to three lines, with a toggle only when it overflows. */
+function EntryText({ text, t }: { text: string; t: Translate }) {
+  const ref = useRef<HTMLParagraphElement>(null)
+  const [expanded, setExpanded] = useState(false)
+  const [overflowing, setOverflowing] = useState(false)
+
+  useEffect(() => {
+    const element = ref.current
+    if (element === null) return
+    const measure = (): void => setOverflowing(element.scrollHeight > element.clientHeight + 1)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [text, expanded])
+
+  return (
+    <>
+      <p ref={ref} className={expanded ? 'lm-text' : 'lm-text lm-textClamped'}>
+        {text}
+      </p>
+      {overflowing || expanded ? (
+        <button
+          type="button"
+          className="lm-textToggle"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {t(expanded ? 'entry.collapse' : 'entry.expand')}
+        </button>
+      ) : null}
+    </>
+  )
+}
+
+/** Decorative search glyph for the list filter. */
+function SearchGlyph() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true">
+      <circle cx="6.75" cy="6.75" r="4.25" />
+      <path d="m10.2 10.2 3.3 3.3" />
+    </svg>
+  )
+}
+
+/** Decorative close glyph for clearing the search. */
+function CloseGlyph() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true">
+      <path d="m4 4 8 8M12 4l-8 8" />
+    </svg>
   )
 }
 
