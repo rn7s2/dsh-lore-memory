@@ -34,7 +34,7 @@ interface ClientContext {
 export const inject = ['slots', 'locale', 'remote']
 
 /** The book glyph the sidebar shows; the row owns the accessible label. */
-export function LoreMemoryIcon({ size }: { size?: number }) {
+function LoreMemoryIcon({ size }: { size?: number }) {
   const edge = size ?? 16
   return (
     <svg

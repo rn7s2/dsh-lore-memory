@@ -16,7 +16,7 @@ import type {
 interface RemoteResult<T> {
   readonly ok: boolean
   readonly value?: T
-  readonly error?: { readonly code?: string; readonly message?: string }
+  readonly error?: { readonly message?: string }
 }
 
 interface Namespace {
@@ -35,18 +35,6 @@ export interface LoreMemoryApi {
   remove(request: RemoveRequest): Promise<EntryResult>
 }
 
-/** A failure reported by the Host, including its code. */
-export class RequestFailure extends Error {
-  override readonly name = 'RequestFailure'
-
-  constructor(
-    readonly code: string,
-    message: string,
-  ) {
-    super(message)
-  }
-}
-
 /** A human-readable message for any thrown value. */
 export function messageOf(error: unknown): string {
   if (error instanceof Error && error.message.length > 0) return error.message
@@ -57,12 +45,12 @@ export function messageOf(error: unknown): string {
 export function createApi(getService: () => unknown): LoreMemoryApi {
   const call = async <T>(method: keyof Namespace, ...args: unknown[]): Promise<T> => {
     const service = getService() as Namespace | undefined
-    if (service === undefined) throw new RequestFailure('lore-memory/unavailable', 'The lore and memory service is not mounted.')
+    if (service === undefined) throw new Error('The lore and memory service is not mounted.')
     const invoke = service[method] as ((...parameters: unknown[]) => Promise<RemoteResult<T>>) | undefined
-    if (typeof invoke !== 'function') throw new RequestFailure('lore-memory/unavailable', `The lore and memory service has no ${method} method.`)
+    if (typeof invoke !== 'function') throw new Error(`The lore and memory service has no ${method} method.`)
     const result = await invoke.apply(service, args)
     if (result.ok) return result.value as T
-    throw new RequestFailure(result.error?.code ?? 'lore-memory/failed', result.error?.message ?? 'The request failed.')
+    throw new Error(result.error?.message ?? 'The request failed.')
   }
   return {
     overview: () => call('overview'),

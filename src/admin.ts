@@ -19,14 +19,13 @@ import {
 import type { LoreMemoryStore } from './store.js'
 
 /** A failure the gateway forwards to the browser with its code intact. */
-export class AdminError extends Error {
+class AdminError extends Error {
   override readonly name = 'RemoteError'
   readonly isDSHRemoteError = true
 
   constructor(
     readonly code: string,
     message: string,
-    readonly details: Readonly<Record<string, unknown>> = {},
   ) {
     super(message)
   }
@@ -60,7 +59,7 @@ export class LoreMemoryAdmin {
   async overview(): Promise<Overview> {
     const store = await this.store
     const status = store.status()
-    const report = { state: status.state, ...(status.reason === undefined ? {} : { reason: status.reason }), dbPath: status.dbPath }
+    const report = { state: status.state, ...(status.reason === undefined ? {} : { reason: status.reason }) }
     if (status.state === 'unavailable') return { status: report, scopes: [], total: { lore: 0, memory: 0 } }
     const counts = await attempt(() => store.scopeCountsAsync())
     const scopes = counts.map((count) => ({ path: count.scope, lore: count.lore, memory: count.memory }))
@@ -105,7 +104,7 @@ export class LoreMemoryAdmin {
   }
 }
 
-export interface RemoteService {
+interface RemoteService {
   overview(): Promise<Overview>
   entries(request: EntriesRequest): Promise<EntriesResult>
   create(request: CreateRequest): Promise<EntryResult>

@@ -20,7 +20,6 @@ export const PANEL_ID = 'lore-memory'
 export interface OverviewStatus {
   readonly state: 'ready' | 'read-only' | 'unavailable'
   readonly reason?: string
-  readonly dbPath: string
 }
 
 export interface ScopeSummary {
@@ -69,12 +68,10 @@ export interface RemoveRequest {
   readonly id: number
 }
 
-/** A strict codec: the Host parses every browser-supplied field with `create().parse`. */
+/** A strict codec: the Host and the client both parse through `create().parse`. */
 export interface StrictCodec<T> {
   readonly mode: 'strict'
   readonly typeSymbol: string
-  readonly description: string
-  readonly jsonSchema: Readonly<Record<string, unknown>>
   create(): { parse(value: unknown): T }
 }
 
@@ -82,7 +79,6 @@ export interface RemoteParameter {
   readonly name: string
   readonly wire: string
   readonly source: 'json'
-  readonly description: string
   readonly codec: StrictCodec<unknown>
 }
 
@@ -91,32 +87,21 @@ export interface RemoteDescriptor {
   readonly service: string
   readonly namespace: string
   readonly method: string
-  readonly description: string
   readonly invocation: { readonly kind: 'direct' }
   readonly parameters: readonly RemoteParameter[]
   readonly result: StrictCodec<unknown>
-  readonly sourceLocation: { readonly file: string; readonly line: number; readonly column: number }
-  /** Envelope parser used by reflection consumers; Host dispatch parses each parameter codec. */
-  input(options?: { strict?: boolean }): { create(): { parse(value: unknown): Record<string, unknown> } }
-  /** Invoke the business method on a mounted namespace with the parsed envelope. */
-  invoke(remote: unknown, input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>
 }
 
 /** The mountable contribution the browser hands to `ctx.remote.$mount`. */
 export interface RemoteContribution {
   readonly package: string
   readonly descriptors: readonly RemoteDescriptor[]
-  readonly methods: Readonly<Record<string, RemoteDescriptor>>
 }
 
-type JsonSchema = Record<string, unknown>
-
-function codec<T>(name: string, description: string, jsonSchema: JsonSchema, parse: (value: unknown) => T): StrictCodec<T> {
+function codec<T>(name: string, parse: (value: unknown) => T): StrictCodec<T> {
   return {
     mode: 'strict',
     typeSymbol: `${PACKAGE_NAME}#${name}`,
-    description,
-    jsonSchema,
     create: () => ({ parse }),
   }
 }
@@ -178,120 +163,58 @@ function optionalKindOf(type: EntryType, value: unknown): MemoryKind | undefined
   return value
 }
 
-const TYPE_ENUM = ['lore', 'memory'] as const
-const KIND_ENUM = [...MEMORY_KINDS]
+const entriesRequest = codec<EntriesRequest>('EntriesRequest', (value) => {
+  const object = strictObject(value, ['type', 'prefix'])
+  return { type: entryTypeOf(required(object['type'], 'type')), prefix: pathOf(required(object['prefix'], 'prefix'), 'prefix') }
+})
 
-const entriesRequest = codec<EntriesRequest>(
-  'EntriesRequest',
-  'the entry type and the absolute path prefix to list',
-  {
-    type: 'object',
-    properties: {
-      type: { type: 'string', enum: [...TYPE_ENUM] },
-      prefix: { type: 'string', minLength: 1, description: 'Absolute path; "/" selects every scope.' },
-    },
-    required: ['type', 'prefix'],
-    additionalProperties: false,
-  },
-  (value) => {
-    const object = strictObject(value, ['type', 'prefix'])
-    return { type: entryTypeOf(required(object['type'], 'type')), prefix: pathOf(required(object['prefix'], 'prefix'), 'prefix') }
-  },
-)
+const createRequest = codec<CreateRequest>('CreateRequest', (value) => {
+  const object = strictObject(value, ['type', 'scope', 'text', 'kind'])
+  const type = entryTypeOf(required(object['type'], 'type'))
+  const kind = kindOf(type, object['kind'])
+  return {
+    type,
+    scope: pathOf(required(object['scope'], 'scope'), 'scope'),
+    text: textOf(required(object['text'], 'text')),
+    ...(kind === null ? {} : { kind }),
+  }
+})
 
-const createRequest = codec<CreateRequest>(
-  'CreateRequest',
-  'the entry to add',
-  {
-    type: 'object',
-    properties: {
-      type: { type: 'string', enum: [...TYPE_ENUM] },
-      scope: { type: 'string', minLength: 1, description: 'Absolute path of the folder that owns the entry.' },
-      text: { type: 'string', minLength: 1 },
-      kind: { type: 'string', enum: KIND_ENUM, description: 'Required for memory, rejected for lore.' },
-    },
-    required: ['type', 'scope', 'text'],
-    additionalProperties: false,
-  },
-  (value) => {
-    const object = strictObject(value, ['type', 'scope', 'text', 'kind'])
-    const type = entryTypeOf(required(object['type'], 'type'))
-    const kind = kindOf(type, object['kind'])
-    return {
-      type,
-      scope: pathOf(required(object['scope'], 'scope'), 'scope'),
-      text: textOf(required(object['text'], 'text')),
-      ...(kind === null ? {} : { kind }),
-    }
-  },
-)
+const updateRequest = codec<UpdateRequest>('UpdateRequest', (value) => {
+  const object = strictObject(value, ['type', 'scope', 'id', 'text', 'kind'])
+  const type = entryTypeOf(required(object['type'], 'type'))
+  const text = object['text'] === undefined ? undefined : textOf(object['text'])
+  const kind = optionalKindOf(type, object['kind'])
+  const id = idOf(required(object['id'], 'id'))
+  if (text === undefined && kind === undefined) throw new TypeError('nothing to change: give text or kind')
+  return {
+    type,
+    scope: pathOf(required(object['scope'], 'scope'), 'scope'),
+    id,
+    ...(text === undefined ? {} : { text }),
+    ...(kind === undefined ? {} : { kind }),
+  }
+})
 
-const updateRequest = codec<UpdateRequest>(
-  'UpdateRequest',
-  'the entry to change and its new text and/or kind',
-  {
-    type: 'object',
-    properties: {
-      type: { type: 'string', enum: [...TYPE_ENUM] },
-      scope: { type: 'string', minLength: 1 },
-      id: { type: 'integer', minimum: 1 },
-      text: { type: 'string', minLength: 1 },
-      kind: { type: 'string', enum: KIND_ENUM },
-    },
-    required: ['type', 'scope', 'id'],
-    additionalProperties: false,
-  },
-  (value) => {
-    const object = strictObject(value, ['type', 'scope', 'id', 'text', 'kind'])
-    const type = entryTypeOf(required(object['type'], 'type'))
-    const text = object['text'] === undefined ? undefined : textOf(object['text'])
-    const kind = optionalKindOf(type, object['kind'])
-    const id = idOf(required(object['id'], 'id'))
-    if (text === undefined && kind === undefined) throw new TypeError('nothing to change: give text or kind')
-    return {
-      type,
-      scope: pathOf(required(object['scope'], 'scope'), 'scope'),
-      id,
-      ...(text === undefined ? {} : { text }),
-      ...(kind === undefined ? {} : { kind }),
-    }
-  },
-)
-
-const removeRequest = codec<RemoveRequest>(
-  'RemoveRequest',
-  'the entry to delete',
-  {
-    type: 'object',
-    properties: {
-      type: { type: 'string', enum: [...TYPE_ENUM] },
-      scope: { type: 'string', minLength: 1 },
-      id: { type: 'integer', minimum: 1 },
-    },
-    required: ['type', 'scope', 'id'],
-    additionalProperties: false,
-  },
-  (value) => {
-    const object = strictObject(value, ['type', 'scope', 'id'])
-    return {
-      type: entryTypeOf(required(object['type'], 'type')),
-      scope: pathOf(required(object['scope'], 'scope'), 'scope'),
-      id: idOf(required(object['id'], 'id')),
-    }
-  },
-)
+const removeRequest = codec<RemoveRequest>('RemoveRequest', (value) => {
+  const object = strictObject(value, ['type', 'scope', 'id'])
+  return {
+    type: entryTypeOf(required(object['type'], 'type')),
+    scope: pathOf(required(object['scope'], 'scope'), 'scope'),
+    id: idOf(required(object['id'], 'id')),
+  }
+})
 
 function passThrough<T>(value: unknown): T {
   return value as T
 }
 
-const overviewResult = codec<Overview>('Overview', 'every scope with its entry counts and the store status', { description: 'the overview' }, passThrough)
-const entriesResult = codec<EntriesResult>('EntriesResult', 'the entries at and below the requested prefix', { description: 'the entries' }, passThrough)
-const entryResult = codec<EntryResult>('EntryResult', 'the entry that was written', { description: 'the written entry' }, passThrough)
+const overviewResult = codec<Overview>('Overview', passThrough)
+const entriesResult = codec<EntriesResult>('EntriesResult', passThrough)
+const entryResult = codec<EntryResult>('EntryResult', passThrough)
 
 function directMethod(
   method: string,
-  description: string,
   parameters: readonly RemoteParameter[],
   result: StrictCodec<unknown>,
 ): RemoteDescriptor {
@@ -300,30 +223,14 @@ function directMethod(
     service: NAMESPACE,
     namespace: NAMESPACE,
     method,
-    description,
     invocation: { kind: 'direct' },
     parameters,
     result,
-    sourceLocation: { file: `src/{host,client}/${method}.ts`, line: 1, column: 1 },
-    input: () => ({
-      create: () => ({
-        parse: (value: unknown) => {
-          const envelope = strictObject(value, parameters.map((parameter) => parameter.wire))
-          return Object.fromEntries(parameters.map((parameter) => [parameter.wire, parameter.codec.create().parse(envelope[parameter.wire])]))
-        },
-      }),
-    }),
-    invoke: (remote: unknown, input: Record<string, unknown>) => {
-      const receiver = remote as Record<string, (...args: unknown[]) => Promise<unknown>>
-      const call = receiver[method]
-      if (typeof call !== 'function') return Promise.reject(new Error(`Remote namespace has no method ${method}`))
-      return call.apply(receiver, parameters.map((parameter) => input[parameter.wire]))
-    },
   }
 }
 
-function parameter(name: string, description: string, spec: StrictCodec<unknown>): RemoteParameter {
-  return { name, wire: name, source: 'json', description, codec: spec }
+function parameter(name: string, spec: StrictCodec<unknown>): RemoteParameter {
+  return { name, wire: name, source: 'json', codec: spec }
 }
 
 /**
@@ -336,45 +243,15 @@ function parameter(name: string, description: string, spec: StrictCodec<unknown>
  */
 export function buildDescriptors(): RemoteDescriptor[] {
   return [
-    directMethod(
-      'overview',
-      'List every scope that holds lore or memory, with its per-type counts and the store status.',
-      [],
-      overviewResult,
-    ),
-    directMethod(
-      'entries',
-      'List the entries of one type stored at an absolute path prefix or in a folder below it.',
-      [parameter('request', 'the entry type and the absolute path prefix to list.', entriesRequest)],
-      entriesResult,
-    ),
-    directMethod(
-      'create',
-      'Add one lore or memory entry to the scope named by its absolute path.',
-      [parameter('request', 'the entry to add.', createRequest)],
-      entryResult,
-    ),
-    directMethod(
-      'update',
-      'Change the text and/or kind of one entry owned by the scope named by its absolute path.',
-      [parameter('request', 'the entry to change and its new text and/or kind.', updateRequest)],
-      entryResult,
-    ),
-    directMethod(
-      'delete',
-      'Delete one entry owned by the scope named by its absolute path.',
-      [parameter('request', 'the entry to delete.', removeRequest)],
-      entryResult,
-    ),
+    directMethod('overview', [], overviewResult),
+    directMethod('entries', [parameter('request', entriesRequest)], entriesResult),
+    directMethod('create', [parameter('request', createRequest)], entryResult),
+    directMethod('update', [parameter('request', updateRequest)], entryResult),
+    directMethod('delete', [parameter('request', removeRequest)], entryResult),
   ]
 }
 
 /** The contribution the browser mounts; the Host registers the same descriptors. */
 export function buildContribution(): RemoteContribution {
-  const descriptors = buildDescriptors()
-  return {
-    package: PACKAGE_NAME,
-    descriptors,
-    methods: Object.fromEntries(descriptors.map((descriptor) => [`${descriptor.namespace}/${descriptor.method}`, descriptor])),
-  }
+  return { package: PACKAGE_NAME, descriptors: buildDescriptors() }
 }
