@@ -2,7 +2,7 @@
  * The management page: a breadcrumb over path prefixes, then the Lore and
  * Memory tabs for everything at and below the selected prefix.
  */
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 
 import { MEMORY_KINDS, type Entry, type EntryType, type MemoryKind } from '../types.js'
 import { ENTRY_PAGE_SIZE, type CreateRequest, type Overview, type ScopeSummary } from '../remote.js'
@@ -22,14 +22,6 @@ const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', tim
 function formatTime(iso: string): string {
   const date = new Date(iso)
   return Number.isNaN(date.getTime()) ? '' : dateFormat.format(date)
-}
-
-function metaOf(entry: Entry, t: (key: string) => string): string {
-  const parts: string[] = []
-  if (entry.kind !== null) parts.push(t(`kind.${entry.kind}`))
-  const time = formatTime(entry.updatedAt)
-  if (time !== '') parts.push(`${t('updated')} ${time}`)
-  return parts.join(' · ')
 }
 
 interface KindFieldProps {
@@ -80,6 +72,7 @@ export function LoreMemoryPage(props: PageProps) {
   const [confirmId, setConfirmId] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
+  const scopeInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     let live = true
@@ -128,6 +121,14 @@ export function LoreMemoryPage(props: PageProps) {
       live = false
     }
   }, [api, tab, prefix, overviewState, reload])
+
+  useEffect(() => {
+    if (!composing) return
+    const input = scopeInputRef.current
+    if (input === null) return
+    input.focus()
+    input.select()
+  }, [composing])
 
   useEffect(() => {
     if (entries === null) return
@@ -214,9 +215,13 @@ export function LoreMemoryPage(props: PageProps) {
       ...(tab === 'memory' ? { kind: draftKind } : {}),
     }
     void api.create(request).then(
-      () => {
+      (result) => {
         setComposing(false)
         setDraftText('')
+        // Show the folder the entry landed in, which may differ from the
+        // prefix the form opened on.
+        setPrefix(result.entry.scope)
+        resetList()
         setReload((value) => value + 1)
       },
       (error: unknown) => setActionError(messageOf(error)),
@@ -275,14 +280,19 @@ export function LoreMemoryPage(props: PageProps) {
       <style>{PAGE_CSS}</style>
       <div className="lm-content">
         <header className="lm-head">
-          <div>
+          <div className="lm-heading">
             <h1>{t('title')}</h1>
             <p className="lm-sub">{t('subtitle')}</p>
           </div>
-          <div className="lm-actions">
+          <div className="lm-headActions">
             <button type="button" className="lm-button" disabled={busy} onClick={() => setReload((value) => value + 1)}>
               {t('refresh')}
             </button>
+            {canAdd && !composing ? (
+              <button type="button" className="lm-button lm-primary" onClick={startCompose} disabled={busy}>
+                {t(tab === 'lore' ? 'new.lore' : 'new.memory')}
+              </button>
+            ) : null}
           </div>
         </header>
 
@@ -330,10 +340,6 @@ export function LoreMemoryPage(props: PageProps) {
             </Fragment>
           ))}
         </nav>
-
-        <p className="lm-summary">
-          {totals.lore} {t('unit.lore')} · {totals.memory} {t('unit.memory')}
-        </p>
 
         {folders.length > 0 ? (
           <div className="lm-folders">
@@ -388,12 +394,6 @@ export function LoreMemoryPage(props: PageProps) {
             {t('tabs.memory')}
             <span className="lm-count">{totals.memory}</span>
           </button>
-          <span className="lm-tabSpacer" />
-          {canAdd ? (
-            <button type="button" className="lm-button lm-accent" onClick={startCompose} disabled={busy || composing}>
-              {t(tab === 'lore' ? 'new.lore' : 'new.memory')}
-            </button>
-          ) : null}
         </div>
 
         <div className="lm-panel" id="lm-panel" role="tabpanel" aria-labelledby={tab === 'lore' ? 'lm-tab-lore' : 'lm-tab-memory'}>
@@ -406,31 +406,31 @@ export function LoreMemoryPage(props: PageProps) {
                 saveNew()
               }}
             >
-              <label className="lm-field">
-                <span className="lm-fieldLabel">{t('scope.pick')}</span>
-                <input
-                  className="lm-input"
-                  list="lm-scope-options"
-                  value={draftScope}
-                  disabled={busy}
-                  placeholder={t('scope.placeholder')}
-                  onChange={(event) => setDraftScope(event.target.value)}
-                />
-                <datalist id="lm-scope-options">
-                  {scopeOptions.map((path) => (
-                    <option key={path} value={path} />
-                  ))}
-                </datalist>
-              </label>
+              <div className="lm-formRow">
+                <label className="lm-field">
+                  <span className="lm-fieldLabel">{t('scope.pick')}</span>
+                  <input
+                    ref={scopeInputRef}
+                    className="lm-input"
+                    list="lm-scope-options"
+                    value={draftScope}
+                    disabled={busy}
+                    placeholder={t('scope.placeholder')}
+                    onChange={(event) => setDraftScope(event.target.value)}
+                  />
+                  <datalist id="lm-scope-options">
+                    {scopeOptions.map((path) => (
+                      <option key={path} value={path} />
+                    ))}
+                  </datalist>
+                </label>
+                {tab === 'memory' ? <KindField value={draftKind} disabled={busy} t={t} onChange={setDraftKind} /> : null}
+              </div>
               {draftScope !== '' && !isScopePath(draftScope) ? <p className="lm-error">{t('scope.invalid')}</p> : null}
-              {tab === 'memory' ? (
-                <KindField value={draftKind} disabled={busy} t={t} onChange={setDraftKind} />
-              ) : null}
               <label className="lm-field">
-                <span className="lm-fieldLabel">{t(tab === 'lore' ? 'new.lore' : 'new.memory')}</span>
+                <span className="lm-fieldLabel">{t(tab === 'lore' ? 'tabs.lore' : 'tabs.memory')}</span>
                 <textarea
                   className="lm-textarea"
-                  autoFocus
                   rows={3}
                   value={draftText}
                   disabled={busy}
@@ -440,8 +440,8 @@ export function LoreMemoryPage(props: PageProps) {
               </label>
               <p className="lm-hint">{t('scope.hint')}</p>
               {actionError !== null ? <p className="lm-error">{actionError}</p> : null}
-              <div className="lm-actions">
-                <button type="submit" className="lm-button lm-accent" disabled={busy || draftText.trim() === '' || !isScopePath(draftScope)}>
+              <div className="lm-formActions">
+                <button type="submit" className="lm-button lm-primary" disabled={busy || draftText.trim() === '' || !isScopePath(draftScope)}>
                   {busy ? t('saving') : t('save')}
                 </button>
                 <button type="button" className="lm-button" disabled={busy} onClick={closeEditors}>
@@ -466,7 +466,7 @@ export function LoreMemoryPage(props: PageProps) {
             <div className="lm-empty" role="alert">
               <p className="lm-emptyTitle">{t('list.error')}</p>
               <p>{entriesError}</p>
-              <div className="lm-actions" style={{ justifyContent: 'center', marginTop: '12px' }}>
+              <div className="lm-emptyActions">
                 <button type="button" className="lm-button" onClick={() => setReload((value) => value + 1)}>
                   {t('retry')}
                 </button>
@@ -477,24 +477,46 @@ export function LoreMemoryPage(props: PageProps) {
           ) : entries.length === 0 ? (
             <div className="lm-empty">
               <p className="lm-emptyTitle">{t(tab === 'lore' ? 'list.empty.lore' : 'list.empty.memory')}</p>
-              {overview !== null && overview.total.lore + overview.total.memory === 0 ? <p>{t('empty.body')}</p> : null}
-              {canAdd ? (
-                <div className="lm-actions" style={{ justifyContent: 'center', marginTop: '16px' }}>
-                  <button type="button" className="lm-button lm-accent" onClick={startCompose}>
-                    {t(tab === 'lore' ? 'new.lore' : 'new.memory')}
-                  </button>
-                </div>
-              ) : null}
+              {overview !== null && overview.total.lore + overview.total.memory === 0 ? (
+                <p>{t('empty.body')}</p>
+              ) : (
+                <p>{t(tab === 'lore' ? 'empty.loreHint' : 'empty.memoryHint')}</p>
+              )}
             </div>
           ) : (
             <ul className="lm-list">
               {entries.map((entry) => (
                 <li key={entry.id} className="lm-entry">
-                  <div className="lm-entryTop">
+                  <div className="lm-entryHead">
                     <button type="button" className="lm-scope" title={entry.scope} onClick={() => go(entry.scope)}>
-                      {entry.scope}
+                      <FolderGlyph />
+                      <span className="lm-scopePath">{entry.scope}</span>
                     </button>
-                    <span className="lm-meta">{metaOf(entry, t)}</span>
+                    {entry.kind === null ? null : <span className="lm-badge">{t(`kind.${entry.kind}`)}</span>}
+                    <div className="lm-entryMeta">
+                      <span className="lm-updated">
+                        {t('updated')} {formatTime(entry.updatedAt)}
+                      </span>
+                      {editingId === entry.id || confirmId === entry.id ? null : (
+                        <div className="lm-entryActions">
+                          <button type="button" className="lm-link" disabled={busy || readOnly} onClick={() => startEdit(entry)}>
+                            {t('edit')}
+                          </button>
+                          <button
+                            type="button"
+                            className="lm-link lm-linkDanger"
+                            disabled={busy || readOnly}
+                            onClick={() => {
+                              setConfirmId(entry.id)
+                              setEditingId(null)
+                              setActionError(null)
+                            }}
+                          >
+                            {t('delete')}
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                   {editingId === entry.id ? (
                     <div className="lm-editor">
@@ -509,10 +531,10 @@ export function LoreMemoryPage(props: PageProps) {
                       />
                       {entry.type === 'memory' ? <KindField value={editKind} disabled={busy} t={t} onChange={setEditKind} /> : null}
                       {actionError !== null ? <p className="lm-error">{actionError}</p> : null}
-                      <div className="lm-actions">
+                      <div className="lm-formActions">
                         <button
                           type="button"
-                          className="lm-button lm-accent"
+                          className="lm-button lm-primary"
                           disabled={busy || editText.trim() === ''}
                           onClick={() => saveEdit(entry)}
                         >
@@ -531,7 +553,7 @@ export function LoreMemoryPage(props: PageProps) {
                           <p>
                             {t('confirm.delete')} <span>{t('confirm.hint')}</span>
                           </p>
-                          <div className="lm-actions">
+                          <div className="lm-formActions">
                             <button type="button" className="lm-button lm-danger" disabled={busy} onClick={() => deleteEntry(entry)}>
                               {t('confirm.yes')}
                             </button>
@@ -540,25 +562,7 @@ export function LoreMemoryPage(props: PageProps) {
                             </button>
                           </div>
                         </div>
-                      ) : (
-                        <div className="lm-actions">
-                          <button type="button" className="lm-link" disabled={busy || readOnly} onClick={() => startEdit(entry)}>
-                            {t('edit')}
-                          </button>
-                          <button
-                            type="button"
-                            className="lm-link lm-linkDanger"
-                            disabled={busy || readOnly}
-                            onClick={() => {
-                              setConfirmId(entry.id)
-                              setEditingId(null)
-                              setActionError(null)
-                            }}
-                          >
-                            {t('delete')}
-                          </button>
-                        </div>
-                      )}
+                      ) : null}
                     </>
                   )}
                 </li>
