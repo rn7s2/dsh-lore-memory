@@ -46,7 +46,9 @@ export const en = {
   'status.readOnly': 'Read-only',
   'status.unavailable': 'Unavailable',
   'status.hint': 'The database can only be read right now.',
-  'empty.body': 'Lore is what the model must follow in this folder. Memory is what the agent keeps for itself. Open a folder to add one here, or let the agent write with the lore and memory tools.',
+  'empty.body': 'Lore is what the model must follow in this folder. Memory is what the agent keeps for itself. Use the New button above, or let the agent write with the lore and memory tools.',
+  'empty.loreHint': 'Rules added here apply to this folder and every folder below it.',
+  'empty.memoryHint': 'Notes added here are loaded by sessions in this folder and below it.',
   'memory.note': 'Memory is loaded when a session starts; edits apply to new sessions.',
   'updated': 'Updated',
 }
@@ -96,7 +98,9 @@ export const zh: Record<keyof typeof en, string> = {
   'status.readOnly': '只读',
   'status.unavailable': '不可用',
   'status.hint': '数据库当前只能读取。',
-  'empty.body': 'Lore 是模型在这个文件夹里必须遵守的规则；记忆是 Agent 为自己保存的知识。进入一个文件夹即可在这里新增，也可以让 Agent 用 lore 和 memory 工具写入。',
+  'empty.body': 'Lore 是模型在这个文件夹里必须遵守的规则；记忆是 Agent 为自己保存的知识。可以用上方的“新建”按钮，也可以让 Agent 用 lore 和 memory 工具写入。',
+  'empty.loreHint': '在这里新增的规则会应用于这个文件夹及其所有子文件夹。',
+  'empty.memoryHint': '在这里新增的记忆会在该文件夹及其子文件夹的会话启动时载入。',
   'memory.note': '记忆在会话启动时载入；修改会对新会话生效。',
   'updated': '更新于',
 }
