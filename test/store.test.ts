@@ -79,6 +79,29 @@ describe('store', () => {
     await expect(store.listUnderAsync('lore', 'relative')).rejects.toThrow(/absolute path/)
   })
 
+  it('searches at and below a path prefix with the shared bm25 ranking', async () => {
+    const root = tempDir()
+    const { work, acme, other } = workspaces(root)
+    const store = await open(join(root, 'db.sqlite'))
+    await store.add('memory', work, 'Deploy with pnpm on macOS.', 'fact', user)
+    await store.add('memory', acme, 'Deploy deploy deploy now.', 'procedure', user)
+    await store.add('memory', other, 'Unrelated deploy note.', 'fact', user)
+    await store.add('memory', acme, '使用 pnpm 部署服务。', 'fact', user)
+
+    const results = await store.searchUnderAsync('memory', work, 'deploy', 10)
+    expect(results[0]?.text).toBe('Deploy deploy deploy now.')
+    expect(results.map((entry) => entry.scope)).toEqual(expect.arrayContaining([work, acme, other]))
+
+    // The prefix is a subtree, not a visibility set: a child search cannot
+    // reach the parent or a sibling.
+    const narrow = await store.searchUnderAsync('memory', acme, 'deploy', 10)
+    expect(narrow.length).toBeGreaterThan(0)
+    expect(narrow.every((entry) => entry.scope === acme)).toBe(true)
+
+    expect((await store.searchUnderAsync('memory', work, '部署', 10)).map((entry) => entry.text)).toContain('使用 pnpm 部署服务。')
+    expect(await store.searchUnderAsync('memory', work, '   ', 10)).toEqual([])
+  })
+
   it('refuses to change a parent workspace entry and names the workspace argument', async () => {
     const root = tempDir()
     const { work, acme, other } = workspaces(root)

@@ -53,6 +53,9 @@ The plugin adds a **Lore & Memory** entry to the sidebar, directly under **Autom
 - A breadcrumb over absolute path prefixes, starting at **All scopes**, with the child folders and their subtree counts.
 - Two tabs, **Lore** and **Memory**, listing the entries stored at or below the selected prefix, with counts.
 - Add, edit, and delete in place; memory entries also pick a kind. The scope field opens prefilled with the current breadcrumb path and selected, suggests the known folders, and accepts any absolute path whose folder exists; at **All scopes** it starts empty. A fresh profile can therefore add its first entry. Edits and deletes keep working for a folder that has since disappeared.
+- Long entries show three lines with **Show more / Show less**.
+- Deleting asks inline beside the row's Delete action, not below the entry.
+- A search field above the list runs the same bm25 search as the `lore` and `memory` tools, scoped to the current prefix and tab.
 - One view lists at most 500 entries; when it is truncated, the page says so and narrowing the scope shows the rest.
 
 This is the user's surface, so it edits any scope directly, including a parent folder, without the agent's approval step. It writes with `author = user` because the user performed the action; the agent's tools keep their own rules, including the approval for lore and the optional named workspace. A read-only or unavailable database is reported in a banner, and writes are disabled.

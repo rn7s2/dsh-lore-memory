@@ -353,31 +353,78 @@ export class LoreMemoryStore {
     })
   }
 
-  /** Visible entries matching any term of `query`, best first. */
-  async search(type: EntryType, workspace: string, query: string, limit: number, kind?: MemoryKind): Promise<Entry[]> {
-    const db = this.requireDb()
+  /** Refuse search when the tokenizer is unavailable, with the same reason the tools report. */
+  private requireSearchable(): void {
     if (this.tokenizer === null) {
       throw new StoreError('READ_ONLY', `search is unavailable: ${this.status_.reason ?? 'the search tokenizer is unavailable'}`)
     }
-    return await this.withRetry(() => {
-      const match = anyTermQuery(db, query)
-      if (match === '') return []
-      const params: SQLInputValue[] = [match, type, JSON.stringify(visibleScopes(workspace))]
-      let filter = ''
-      if (kind !== undefined) {
-        filter = ' AND e.kind = ?'
-        params.push(kind)
-      }
-      params.push(limit)
-      const rows = db
-        .prepare(
-          `SELECT ${ENTRY_COLUMNS} FROM entries_fts JOIN entries e ON e.id = entries_fts.rowid
-           WHERE entries_fts MATCH ? AND e.type = ? AND e.scope IN (SELECT value FROM json_each(?))${filter}
-           ORDER BY bm25(entries_fts), length(e.scope) DESC, e.id ASC LIMIT ?`,
-        )
-        .all(...params) as unknown as EntryRow[]
-      return rows.map(toEntry)
-    })
+  }
+
+  /**
+   * The one ranked FTS query: any-term matching, bm25 ordering, nearest scope
+   * first on ties. `scope` supplies the predicate that limits which entries
+   * may match — the visibility set for a session, a path prefix for the page.
+   */
+  private rankedSearch(
+    db: DatabaseSync,
+    type: EntryType,
+    query: string,
+    scope: { readonly clause: string; readonly params: readonly SQLInputValue[] },
+    limit: number,
+    kind?: MemoryKind,
+  ): Entry[] {
+    const match = anyTermQuery(db, query)
+    if (match === '') return []
+    const params: SQLInputValue[] = [match, type, ...scope.params]
+    let filter = ''
+    if (kind !== undefined) {
+      filter = ' AND e.kind = ?'
+      params.push(kind)
+    }
+    params.push(limit)
+    const rows = db
+      .prepare(
+        `SELECT ${ENTRY_COLUMNS} FROM entries_fts JOIN entries e ON e.id = entries_fts.rowid
+         WHERE entries_fts MATCH ? AND e.type = ?${scope.clause}${filter}
+         ORDER BY bm25(entries_fts), length(e.scope) DESC, e.id ASC LIMIT ?`,
+      )
+      .all(...params) as unknown as EntryRow[]
+    return rows.map(toEntry)
+  }
+
+  /** Visible entries matching any term of `query`, best first. */
+  async search(type: EntryType, workspace: string, query: string, limit: number, kind?: MemoryKind): Promise<Entry[]> {
+    const db = this.requireDb()
+    this.requireSearchable()
+    return await this.withRetry(() =>
+      this.rankedSearch(
+        db,
+        type,
+        query,
+        { clause: ' AND e.scope IN (SELECT value FROM json_each(?))', params: [JSON.stringify(visibleScopes(workspace))] },
+        limit,
+        kind,
+      ),
+    )
+  }
+
+  /** Entries at or below `prefix` matching any term of `query`, best first. */
+  async searchUnderAsync(type: EntryType, prefix: string, query: string, limit: number): Promise<Entry[]> {
+    const db = this.requireDb()
+    if (!isAbsolute(prefix)) throw new StoreError('INVALID', `prefix must be an absolute path: ${prefix}`)
+    this.requireSearchable()
+    const base = resolve(prefix)
+    return await this.withRetry(() =>
+      this.rankedSearch(
+        db,
+        type,
+        query,
+        base === sep
+          ? { clause: '', params: [] }
+          : { clause: ' AND (e.scope = ? OR substr(e.scope, 1, length(?) + 1) = ?)', params: [base, base, `${base}${sep}`] },
+        limit,
+      ),
+    )
   }
 
   /** One entry by id, if it exists with this type and is visible from `workspace`. */
