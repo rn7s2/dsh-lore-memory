@@ -55,6 +55,28 @@ describe('store', () => {
     expect(store.list('memory', acme)).toEqual([])
   })
 
+  it('counts entries per scope and lists a whole path prefix', async () => {
+    const root = tempDir()
+    const { work, acme } = workspaces(root)
+    const store = await open(join(root, 'db.sqlite'))
+    await store.add('lore', work, 'Use pnpm.', null, user)
+    await store.add('memory', work, 'macOS only.', 'constraint', user)
+    await store.add('lore', acme, 'Run vitest.', null, user)
+    await store.add('memory', acme, 'Postgres 16.', 'fact', user)
+
+    expect(await store.scopeCountsAsync()).toEqual([
+      { scope: work, lore: 1, memory: 1 },
+      { scope: acme, lore: 1, memory: 1 },
+    ])
+    expect(store.listUnder('lore', work).map((entry) => [entry.scope, entry.text])).toEqual([
+      [work, 'Use pnpm.'],
+      [acme, 'Run vitest.'],
+    ])
+    expect(store.listUnder('memory', acme).map((entry) => entry.text)).toEqual(['Postgres 16.'])
+    expect(store.listUnder('lore', '/')).toHaveLength(2)
+    expect(() => store.listUnder('lore', 'relative')).toThrow(/absolute path/)
+  })
+
   it('refuses to change a parent workspace entry and names the workspace argument', async () => {
     const root = tempDir()
     const { work, acme, other } = workspaces(root)

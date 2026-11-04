@@ -7,34 +7,30 @@
  * gives up with a `BUSY` error after the retry budget, about 5 seconds.
  */
 import { mkdirSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { dirname, isAbsolute, resolve, sep } from 'node:path'
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite'
 import { setTimeout as sleep } from 'node:timers/promises'
 
 import { StoreError, errorMessage, isBusyError } from './errors.js'
 import { visibleScopes } from './scope.js'
 import { type Tokenizer, verifyTokenizer } from './tokenizer.js'
+import { MEMORY_KINDS, type Author, type Entry, type EntryType, type MemoryKind, isMemoryKind } from './types.js'
 
-export type EntryType = 'lore' | 'memory'
-export const MEMORY_KINDS = ['constraint', 'convention', 'decision', 'procedure', 'fact'] as const
-export type MemoryKind = (typeof MEMORY_KINDS)[number]
-export type Author = 'user' | 'agent'
-
-export interface Entry {
-  readonly id: number
-  readonly type: EntryType
-  readonly scope: string
-  readonly kind: MemoryKind | null
-  readonly text: string
-  readonly createdAt: string
-  readonly updatedAt: string
-}
+export type { Author, Entry, EntryType, MemoryKind } from './types.js'
+export { MEMORY_KINDS, isMemoryKind } from './types.js'
 
 export interface StoreStatus {
   /** `ready`: everything works; `read-only`: listing works, search and writes fail; `unavailable`: nothing works. */
   readonly state: 'ready' | 'read-only' | 'unavailable'
   readonly reason?: string
   readonly dbPath: string
+}
+
+/** The number of entries a scope holds, per type. */
+export interface ScopeCount {
+  readonly scope: string
+  readonly lore: number
+  readonly memory: number
 }
 
 export interface RetryPolicy {
@@ -115,10 +111,6 @@ function toEntry(row: EntryRow): Entry {
 }
 
 const ENTRY_COLUMNS = 'e.id, e.type, e.scope, e.kind, e.text, e.created_at, e.updated_at'
-
-export function isMemoryKind(value: unknown): value is MemoryKind {
-  return typeof value === 'string' && (MEMORY_KINDS as readonly string[]).includes(value)
-}
 
 function cleanText(text: unknown): string {
   if (typeof text !== 'string' || text.trim().length === 0) throw new StoreError('INVALID', 'text must be a non-empty string')
@@ -316,6 +308,55 @@ export class LoreMemoryStore {
   async listAsync(type: EntryType, workspace: string, kind?: MemoryKind): Promise<Entry[]> {
     this.requireDb()
     return await this.withRetry(() => this.list(type, workspace, kind))
+  }
+
+  /** Entry counts for every scope that holds at least one entry, ordered by path. */
+  scopeCounts(): ScopeCount[] {
+    const db = this.requireDb()
+    const rows = db
+      .prepare(
+        `SELECT scope,
+                SUM(CASE WHEN type = 'lore' THEN 1 ELSE 0 END) AS lore,
+                SUM(CASE WHEN type = 'memory' THEN 1 ELSE 0 END) AS memory
+           FROM entries GROUP BY scope ORDER BY scope ASC`,
+      )
+      .all() as unknown as { scope: string; lore: number | bigint; memory: number | bigint }[]
+    return rows.map((row) => ({ scope: row.scope, lore: Number(row.lore), memory: Number(row.memory) }))
+  }
+
+  /** {@link scopeCounts} with the busy retry, for callers that can wait. */
+  async scopeCountsAsync(): Promise<ScopeCount[]> {
+    this.requireDb()
+    return await this.withRetry(() => this.scopeCounts())
+  }
+
+  /**
+   * Every entry of `type` stored at `prefix` or below it, by path then age.
+   * The prefix must be absolute; the filesystem root selects every scope.
+   */
+  listUnder(type: EntryType, prefix: string): Entry[] {
+    const db = this.requireDb()
+    if (!isAbsolute(prefix)) throw new StoreError('INVALID', `prefix must be an absolute path: ${prefix}`)
+    const base = resolve(prefix)
+    const rows =
+      base === sep
+        ? (db
+            .prepare(`SELECT ${ENTRY_COLUMNS} FROM entries e WHERE e.type = ? ORDER BY e.scope ASC, e.id ASC`)
+            .all(type) as unknown as EntryRow[])
+        : (db
+            .prepare(
+              `SELECT ${ENTRY_COLUMNS} FROM entries e
+                WHERE e.type = ? AND (e.scope = ? OR substr(e.scope, 1, length(?) + 1) = ?)
+                ORDER BY e.scope ASC, e.id ASC`,
+            )
+            .all(type, base, base, `${base}${sep}`) as unknown as EntryRow[])
+    return rows.map(toEntry)
+  }
+
+  /** {@link listUnder} with the busy retry, for callers that can wait. */
+  async listUnderAsync(type: EntryType, prefix: string): Promise<Entry[]> {
+    this.requireDb()
+    return await this.withRetry(() => this.listUnder(type, prefix))
   }
 
   /** Visible entries matching any term of `query`, best first. */

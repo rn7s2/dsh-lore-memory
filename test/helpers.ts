@@ -68,6 +68,8 @@ export class FakeHost {
   readonly commands = new Map<string, any>()
   readonly sections: { name: string; order: number; interpolate?: boolean; text: (c: { agent?: AgentLike }) => string }[] = []
   readonly services = new Map<string, unknown>()
+  readonly provided = new Map<string, unknown>()
+  readonly typertContributions: any[] = []
   readonly disposers: (() => void)[] = []
   readonly warnings: string[] = []
   readonly approvals: { reason?: string; displayReason?: unknown }[] = []
@@ -93,7 +95,21 @@ export class FakeHost {
       this.disposers.push(execute())
     },
     inject: (_deps: string[], callback: (ctx: any) => void) => {
-      callback({ commands: { register: (definition: any) => (this.commands.set(definition.name, definition), () => undefined) } })
+      callback({
+        commands: { register: (definition: any) => (this.commands.set(definition.name, definition), () => undefined) },
+        typert: {
+          register: (contribution: any) => {
+            this.typertContributions.push(contribution)
+            return () => undefined
+          },
+        },
+        effect: (execute: () => () => void) => {
+          this.disposers.push(execute())
+        },
+      })
+    },
+    provide: (name: string, value: unknown) => {
+      this.provided.set(name, value)
     },
     logger: { warn: (message: string) => void this.warnings.push(message) },
   }

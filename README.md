@@ -46,6 +46,18 @@ Both tools take an optional `workspace`: an absolute path that is the session wo
 
 `/lore` only adds. To edit or remove lore, ask the agent and approve the change.
 
+## Web page
+
+The plugin adds a **Lore & Memory** entry to the sidebar, directly under **Automation tasks**, and one page for every scope:
+
+- A breadcrumb over absolute path prefixes, starting at **All scopes**, with the child folders and their subtree counts.
+- Two tabs, **Lore** and **Memory**, listing the entries stored at or below the selected prefix, with counts.
+- Add, edit, and delete in place; memory entries also pick a kind. A new entry lands in the selected folder, which defaults to the current prefix.
+
+This is the user's surface, so it edits any scope directly, including a parent folder, without the agent's approval step. It writes with `author = user` because the user performed the action; the agent's tools keep their own rules, including the approval for lore and the optional named workspace. A read-only or unavailable database is reported in a banner, and writes are disabled.
+
+The page and the Host share one Remote specification (`src/remote.ts`): the browser mounts five operations (`overview`, `entries`, `create`, `update`, `remove`) under `ctx.remote.loreMemory`, and the Host registers the same descriptors at activation. Every browser-supplied field is checked by a strict codec before it reaches the store.
+
 ## Configuration
 
 ```yaml
@@ -74,7 +86,7 @@ pnpm install
 pnpm run check   # typecheck, tests, build, and verify the committed lib/ is fresh
 ```
 
-The sources are in `src/`, and `lib/index.js` is the committed esbuild output. The tests use temporary databases only.
+The sources are in `src/`; `lib/index.js` (Host) and `lib/client.js` (browser module) are the committed esbuild output. The tests use temporary databases only.
 
 `native/simple/` vendors the unmodified macOS binaries and dictionary of [wangfenjin/simple](https://github.com/wangfenjin/simple) v0.7.1 (MIT, see `native/simple/LICENSE`). Their hashes are pinned in `src/tokenizer.ts`.
 
