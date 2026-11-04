@@ -24,7 +24,7 @@ interface Namespace {
   entries(request: EntriesRequest): Promise<RemoteResult<EntriesResult>>
   create(request: CreateRequest): Promise<RemoteResult<EntryResult>>
   update(request: UpdateRequest): Promise<RemoteResult<EntryResult>>
-  remove(request: RemoveRequest): Promise<RemoteResult<EntryResult>>
+  delete(request: RemoveRequest): Promise<RemoteResult<EntryResult>>
 }
 
 export interface LoreMemoryApi {
@@ -69,6 +69,6 @@ export function createApi(getService: () => unknown): LoreMemoryApi {
     entries: (request) => call('entries', request),
     create: (request) => call('create', request),
     update: (request) => call('update', request),
-    remove: (request) => call('remove', request),
+    remove: (request) => call('delete', request),
   }
 }

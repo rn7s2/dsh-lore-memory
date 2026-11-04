@@ -110,7 +110,7 @@ export interface RemoteService {
   entries(request: EntriesRequest): Promise<EntriesResult>
   create(request: CreateRequest): Promise<EntryResult>
   update(request: UpdateRequest): Promise<EntryResult>
-  remove(request: RemoveRequest): Promise<EntryResult>
+  delete(request: RemoveRequest): Promise<EntryResult>
   readonly typertRemote: { readonly service: RemoteService; readonly serviceKey: string; readonly namespace: string }
 }
 
@@ -121,7 +121,7 @@ export function createRemoteService(admin: LoreMemoryAdmin): RemoteService {
     entries: (request: EntriesRequest) => admin.entries(request),
     create: (request: CreateRequest) => admin.create(request),
     update: (request: UpdateRequest) => admin.update(request),
-    remove: (request: RemoveRequest) => admin.remove(request),
+    delete: (request: RemoveRequest) => admin.remove(request),
   } as unknown as RemoteService
   Object.defineProperty(service, 'typertRemote', {
     value: Object.freeze({ service, serviceKey: NAMESPACE, namespace: NAMESPACE }),

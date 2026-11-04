@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { runInNewContext } from 'node:vm'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { tempDir } from './helpers.js'
 
@@ -107,7 +107,7 @@ describe('built bundle', () => {
       'entries',
       'create',
       'update',
-      'remove',
+      'delete',
     ])
     expect(dictionaries['loreMemory']?.['en']?.['panel']).toBe('Lore & Memory')
     expect(dictionaries['loreMemory']?.['zh']?.['panel']).toBe('Lore 与记忆')
@@ -116,6 +116,40 @@ describe('built bundle', () => {
     expect(registrations[1]?.options).toMatchObject({ id: 'lore-memory', order: 20 })
     expect(registrations[1]?.options.order).toBeGreaterThan(10)
     expect(registrations[1]?.options.label()).toBe('loreMemory.panel')
+    await dispose()
+  })
+
+  it('stays inert when the Remote cannot mount, so the web boot survives', async () => {
+    const consoleError = vi.fn()
+    const module = loadClientModule({ error: consoleError } as unknown as Console)
+    let slotCalls = 0
+    const ctx = {
+      remote: {
+        $mount: async () => {
+          throw new Error('client api: method conflicts with its namespace service')
+        },
+      },
+      locale: {
+        register: () => () => undefined,
+        bind: () => (key: string) => key,
+      },
+      slots: {
+        inject: () => {
+          slotCalls += 1
+          return () => undefined
+        },
+        register: () => ({}),
+      },
+      effect: (execute: () => () => void) => {
+        execute()
+        return () => undefined
+      },
+      get: () => undefined,
+    }
+    const dispose = await module.apply(ctx)
+    expect(typeof dispose).toBe('function')
+    expect(slotCalls).toBe(0)
+    expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('could not be mounted'), expect.any(Error))
     await dispose()
   })
 })
@@ -127,11 +161,12 @@ interface ClientModule {
 }
 
 /** Evaluate the committed browser bundle as the page's loader would. */
-function loadClientModule(): ClientModule {
+function loadClientModule(consoleObject: Console = console): ClientModule {
   const client = readFileSync(join(root, 'lib', 'client.js'), 'utf8')
   let registered: { id: string; factory(require: (name: string) => unknown): Record<string, unknown> } | undefined
   runInNewContext(client, {
     window: { __ModuleLoader__: { load: (entry: typeof registered) => void (registered = entry) } },
+    console: consoleObject,
   })
   if (registered === undefined) throw new Error('the client bundle did not register a module')
   const react = { useState: () => undefined, useEffect: () => undefined, useMemo: () => undefined, Fragment: Symbol('fragment') }
