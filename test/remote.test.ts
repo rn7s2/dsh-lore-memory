@@ -26,6 +26,7 @@ const descriptors = buildDescriptors()
 const byMethod = (method: string) => descriptors.find((descriptor) => descriptor.method === method)!
 const parseCreate = (value: unknown) => byMethod('create').parameters[0]!.codec.create().parse(value)
 const parseUpdate = (value: unknown) => byMethod('update').parameters[0]!.codec.create().parse(value)
+const parseEntries = (value: unknown) => byMethod('entries').parameters[0]!.codec.create().parse(value)
 
 describe('Remote descriptors', () => {
   it('exports the five page operations with direct strict signatures', () => {
@@ -105,6 +106,11 @@ describe('Remote descriptors', () => {
     expect(() => parseUpdate({ type: 'lore', scope: '/work', id: 1, kind: 'fact' })).toThrow(/lore entries have no kind/)
     expect(() => parseUpdate({ type: 'lore', scope: '/work', id: 1 })).toThrow(/nothing to change/)
     expect(() => parseUpdate({ type: 'lore', scope: '/work', id: 0 })).toThrow(/positive integer/)
+    expect(parseEntries({ type: 'lore', prefix: '/', query: '  pnpm  ' })).toEqual({ type: 'lore', prefix: '/', query: 'pnpm' })
+    expect(parseEntries({ type: 'lore', prefix: '/' })).toEqual({ type: 'lore', prefix: '/' })
+    expect(parseEntries({ type: 'lore', prefix: '/', query: '   ' })).toEqual({ type: 'lore', prefix: '/' })
+    expect(() => parseEntries({ type: 'lore', prefix: '/', query: 5 })).toThrow(/query must be a string/)
+    expect(() => parseEntries({ type: 'lore', prefix: '/', query: 'x'.repeat(501) })).toThrow(/500 characters/)
   })
 })
 
@@ -152,6 +158,8 @@ describe('management service', () => {
 
     const under = await service.entries({ type: 'memory', prefix: work })
     expect(under.entries.map((entry: any) => entry.text)).toEqual(['macOS only.', 'acme uses Postgres 16.'])
+    const searched = await service.entries({ type: 'memory', prefix: work, query: 'postgres' })
+    expect(searched).toMatchObject({ entries: [{ text: 'acme uses Postgres 16.' }], truncated: false })
     expect((await service.entries({ type: 'lore', prefix: '/' })).entries).toHaveLength(1)
 
     // The page may change a parent entry: it names that parent as the scope.

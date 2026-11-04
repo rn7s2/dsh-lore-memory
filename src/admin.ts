@@ -80,7 +80,11 @@ export class LoreMemoryAdmin {
   /** The entries of one type at and below `prefix`, bounded by one page. */
   async entries(request: EntriesRequest): Promise<EntriesResult> {
     const store = await this.store
-    const rows = await attempt(() => store.listUnderAsync(request.type, request.prefix, ENTRY_PAGE_SIZE + 1))
+    const query = request.query
+    const rows =
+      query === undefined
+        ? await attempt(() => store.listUnderAsync(request.type, request.prefix, ENTRY_PAGE_SIZE + 1))
+        : await attempt(() => store.searchUnderAsync(request.type, request.prefix, query, ENTRY_PAGE_SIZE + 1))
     return { entries: rows.slice(0, ENTRY_PAGE_SIZE), truncated: rows.length > ENTRY_PAGE_SIZE }
   }
 
