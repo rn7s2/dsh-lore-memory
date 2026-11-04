@@ -23,7 +23,8 @@
     "LICENSE"
   ],
   "os": [
-    "darwin"
+    "darwin",
+    "linux"
   ],
   "engines": {
     "node": ">=24",
