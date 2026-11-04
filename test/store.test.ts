@@ -68,13 +68,15 @@ describe('store', () => {
       { scope: work, lore: 1, memory: 1 },
       { scope: acme, lore: 1, memory: 1 },
     ])
-    expect(store.listUnder('lore', work).map((entry) => [entry.scope, entry.text])).toEqual([
+    expect((await store.listUnderAsync('lore', work)).map((entry) => [entry.scope, entry.text])).toEqual([
       [work, 'Use pnpm.'],
       [acme, 'Run vitest.'],
     ])
-    expect(store.listUnder('memory', acme).map((entry) => entry.text)).toEqual(['Postgres 16.'])
-    expect(store.listUnder('lore', '/')).toHaveLength(2)
-    expect(() => store.listUnder('lore', 'relative')).toThrow(/absolute path/)
+    expect((await store.listUnderAsync('memory', acme)).map((entry) => entry.text)).toEqual(['Postgres 16.'])
+    expect(await store.listUnderAsync('lore', '/')).toHaveLength(2)
+    expect(await store.listUnderAsync('lore', '/', 1)).toHaveLength(1)
+    expect(await store.listUnderAsync('lore', work, 1)).toHaveLength(1)
+    await expect(store.listUnderAsync('lore', 'relative')).rejects.toThrow(/absolute path/)
   })
 
   it('refuses to change a parent workspace entry and names the workspace argument', async () => {

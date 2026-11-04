@@ -148,7 +148,7 @@ describe('built bundle', () => {
     const dispose = await module.apply(ctx)
     expect(typeof dispose).toBe('function')
     expect(slotCalls).toBe(0)
-    expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('could not be mounted'), expect.any(Error))
+    expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('could not be set up'), expect.any(Error))
     await dispose()
   })
 })

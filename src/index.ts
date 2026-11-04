@@ -100,29 +100,33 @@ export function activate(context: unknown, config: LoreMemoryConfig = {}, option
 
   const admin = new LoreMemoryAdmin(store)
   const remote = createRemoteService(admin)
+  let provided = false
   if (typeof ctx.provide === 'function') {
     try {
       ctx.provide(NAMESPACE, remote)
+      provided = true
     } catch (error) {
       warn('the management page service could not be provided', error)
     }
   }
-  // The browser page mounts the same descriptors, so registration waits for the
-  // Typert registry rather than making it a hard dependency of the plugin.
-  ctx.inject(['typert'], (child) => {
-    const typert = child.typert
-    if (typert === undefined || typeof typert.register !== 'function') return
-    const register = () => {
-      try {
-        return typert.register({ package: PACKAGE_NAME, face: 'host', schemas: [], invocations: buildContribution().descriptors })
-      } catch (error) {
-        warn('the management page Remote could not be registered', error)
-        return () => undefined
+  // Only a provided Service can answer the descriptors. Registering them after
+  // a failed provide would let the browser mount a page whose calls all fail.
+  if (provided) {
+    ctx.inject(['typert'], (child) => {
+      const typert = child.typert
+      if (typert === undefined || typeof typert.register !== 'function') return
+      const register = () => {
+        try {
+          return typert.register({ package: PACKAGE_NAME, face: 'host', schemas: [], invocations: buildContribution().descriptors })
+        } catch (error) {
+          warn('the management page Remote could not be registered', error)
+          return () => undefined
+        }
       }
-    }
-    if (typeof child.effect === 'function') child.effect(register, 'lore-memory: management page Remote')
-    else register()
-  })
+      if (typeof child.effect === 'function') child.effect(register, 'lore-memory: management page Remote')
+      else register()
+    })
+  }
 
   // Memory: one snapshot per agent, frozen before its first model step.
   ctx.systemPrompt.section({ name: MEMORY_SECTION.name, order: MEMORY_SECTION.order, interpolate: false, text: (assemble) => service.memorySection(assemble.agent) })

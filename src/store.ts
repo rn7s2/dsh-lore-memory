@@ -311,52 +311,46 @@ export class LoreMemoryStore {
   }
 
   /** Entry counts for every scope that holds at least one entry, ordered by path. */
-  scopeCounts(): ScopeCount[] {
-    const db = this.requireDb()
-    const rows = db
-      .prepare(
-        `SELECT scope,
-                SUM(CASE WHEN type = 'lore' THEN 1 ELSE 0 END) AS lore,
-                SUM(CASE WHEN type = 'memory' THEN 1 ELSE 0 END) AS memory
-           FROM entries GROUP BY scope ORDER BY scope ASC`,
-      )
-      .all() as unknown as { scope: string; lore: number | bigint; memory: number | bigint }[]
-    return rows.map((row) => ({ scope: row.scope, lore: Number(row.lore), memory: Number(row.memory) }))
-  }
-
-  /** {@link scopeCounts} with the busy retry, for callers that can wait. */
   async scopeCountsAsync(): Promise<ScopeCount[]> {
-    this.requireDb()
-    return await this.withRetry(() => this.scopeCounts())
+    const db = this.requireDb()
+    return await this.withRetry(() => {
+      const rows = db
+        .prepare(
+          `SELECT scope,
+                  SUM(CASE WHEN type = 'lore' THEN 1 ELSE 0 END) AS lore,
+                  SUM(CASE WHEN type = 'memory' THEN 1 ELSE 0 END) AS memory
+             FROM entries GROUP BY scope ORDER BY scope ASC`,
+        )
+        .all() as unknown as { scope: string; lore: number | bigint; memory: number | bigint }[]
+      return rows.map((row) => ({ scope: row.scope, lore: Number(row.lore), memory: Number(row.memory) }))
+    })
   }
 
   /**
-   * Every entry of `type` stored at `prefix` or below it, by path then age.
+   * Entries of `type` stored at `prefix` or below it, by path then age.
    * The prefix must be absolute; the filesystem root selects every scope.
+   * `limit` bounds the result and lets the index stop early.
    */
-  listUnder(type: EntryType, prefix: string): Entry[] {
+  async listUnderAsync(type: EntryType, prefix: string, limit?: number): Promise<Entry[]> {
     const db = this.requireDb()
     if (!isAbsolute(prefix)) throw new StoreError('INVALID', `prefix must be an absolute path: ${prefix}`)
     const base = resolve(prefix)
-    const rows =
-      base === sep
-        ? (db
-            .prepare(`SELECT ${ENTRY_COLUMNS} FROM entries e WHERE e.type = ? ORDER BY e.scope ASC, e.id ASC`)
-            .all(type) as unknown as EntryRow[])
-        : (db
-            .prepare(
-              `SELECT ${ENTRY_COLUMNS} FROM entries e
-                WHERE e.type = ? AND (e.scope = ? OR substr(e.scope, 1, length(?) + 1) = ?)
-                ORDER BY e.scope ASC, e.id ASC`,
-            )
-            .all(type, base, base, `${base}${sep}`) as unknown as EntryRow[])
-    return rows.map(toEntry)
-  }
-
-  /** {@link listUnder} with the busy retry, for callers that can wait. */
-  async listUnderAsync(type: EntryType, prefix: string): Promise<Entry[]> {
-    this.requireDb()
-    return await this.withRetry(() => this.listUnder(type, prefix))
+    const bound = limit ?? -1
+    return await this.withRetry(() => {
+      const rows =
+        base === sep
+          ? (db
+              .prepare(`SELECT ${ENTRY_COLUMNS} FROM entries e WHERE e.type = ? ORDER BY e.scope ASC, e.id ASC LIMIT ?`)
+              .all(type, bound) as unknown as EntryRow[])
+          : (db
+              .prepare(
+                `SELECT ${ENTRY_COLUMNS} FROM entries e
+                  WHERE e.type = ? AND (e.scope = ? OR substr(e.scope, 1, length(?) + 1) = ?)
+                  ORDER BY e.scope ASC, e.id ASC LIMIT ?`,
+              )
+              .all(type, base, base, `${base}${sep}`, bound) as unknown as EntryRow[])
+      return rows.map(toEntry)
+    })
   }
 
   /** Visible entries matching any term of `query`, best first. */

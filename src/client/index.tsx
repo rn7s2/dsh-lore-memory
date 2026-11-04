@@ -57,33 +57,36 @@ function LoreMemoryIcon({ size }: { size?: number }) {
 
 export async function apply(context: unknown): Promise<() => Promise<void>> {
   const ctx = context as ClientContext
-  // A failed mount must not take the whole Web app down: the desktop host
+  // A setup failure must not take the whole Web app down: the desktop host
   // treats a rejected client entry as a fatal boot error. Without the page the
   // rest of Harness still works, and the console names the reason.
-  let disposeRemote: () => Promise<void>
+  const disposers: (() => void)[] = []
+  let disposeRemote: (() => Promise<void>) | undefined
   try {
     disposeRemote = await ctx.remote.$mount(buildContribution())
+    disposers.push(ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'lore-memory: page dictionary'))
+    const t = ctx.locale.bind(NS)
+    const api = createApi(() => ctx.get(`remote.${NAMESPACE}`))
+    const injectProps = (): Record<string, unknown> => ({ api, t })
+    disposers.push(
+      ctx.slots.inject('main', () =>
+        ctx.slots.register({ name: 'main', key: PANEL_ID, locale: NS, inject: injectProps }, LoreMemoryPage),
+      ),
+      ctx.slots.inject('sidebar.panellist', () =>
+        ctx.slots.register(
+          { name: 'sidebar.panellist', id: PANEL_ID, order: 20, locale: NS, label: () => t('panel') },
+          LoreMemoryIcon,
+        ),
+      ),
+    )
+    return async () => {
+      for (const dispose of disposers.reverse()) dispose()
+      await disposeRemote?.()
+    }
   } catch (error) {
-    console.error('dsh-lore-memory: the management page Remote could not be mounted; the page is unavailable', error)
+    console.error('dsh-lore-memory: the management page could not be set up; the page is unavailable', error)
+    for (const dispose of disposers.reverse()) dispose()
+    await disposeRemote?.()
     return async () => undefined
-  }
-  const disposeLocale = ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'lore-memory: page dictionary')
-  const t = ctx.locale.bind(NS)
-  const api = createApi(() => ctx.get(`remote.${NAMESPACE}`))
-  const injectProps = (): Record<string, unknown> => ({ api, t })
-  const disposePage = ctx.slots.inject('main', () =>
-    ctx.slots.register({ name: 'main', key: PANEL_ID, locale: NS, inject: injectProps }, LoreMemoryPage),
-  )
-  const disposeIcon = ctx.slots.inject('sidebar.panellist', () =>
-    ctx.slots.register(
-      { name: 'sidebar.panellist', id: PANEL_ID, order: 20, locale: NS, label: () => t('panel') },
-      LoreMemoryIcon,
-    ),
-  )
-  return async () => {
-    disposePage()
-    disposeIcon()
-    disposeLocale()
-    await disposeRemote()
   }
 }
