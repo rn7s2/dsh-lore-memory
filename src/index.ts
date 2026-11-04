@@ -13,6 +13,8 @@ import { type LoreMemoryConfig, resolveConfig } from './config.js'
 import { errorMessage } from './errors.js'
 import type { AgentLike, MessageLike, SessionLike } from './host.js'
 import { type ApprovalPolicyLike, type LorePermission, type SandboxPolicyLike, lorePermission } from './permission.js'
+import { LoreMemoryAdmin, createRemoteService } from './admin.js'
+import { PACKAGE_NAME, NAMESPACE, buildContribution } from './remote.js'
 import { LoreMemoryService } from './service.js'
 import { LoreMemoryStore } from './store.js'
 import { loreCommand, memoryCommand, type CommandDefinitionLike } from './commands.js'
@@ -27,6 +29,12 @@ export const inject = ['tools', 'systemPrompt']
 export const MEMORY_SECTION = { name: 'lore-memory:memory', order: 8500 } as const
 
 type Disposer = () => void
+
+interface HostChildContext {
+  commands: { register(definition: CommandDefinitionLike): Disposer }
+  typert?: { register(contribution: unknown): Disposer }
+  effect?(execute: () => Disposer, label?: string): unknown
+}
 
 type PreStepDecision = { kind: 'reject' } | { kind: 'enter'; messages: MessageLike[]; startsRequestSeries?: true }
 type PreToolDecision =
@@ -43,7 +51,8 @@ interface HostContext {
   get(name: string): unknown
   on(event: string, listener: (...args: any[]) => unknown, options?: { prepend?: boolean }): Disposer
   effect(execute: () => Disposer, label?: string): unknown
-  inject(deps: string[], callback: (ctx: { commands: { register(definition: CommandDefinitionLike): Disposer } }) => void): unknown
+  provide?(name: string, value: unknown): unknown
+  inject(deps: string[], callback: (ctx: HostChildContext) => void): unknown
   logger?: { warn(message: string): void; info?(message: string): void }
 }
 
@@ -87,6 +96,32 @@ export function activate(context: unknown, config: LoreMemoryConfig = {}, option
     },
     defaultDirectory: () => (ctx.get('workingDirectory') as { defaultDirectory?: string } | undefined)?.defaultDirectory,
     warn,
+  })
+
+  const admin = new LoreMemoryAdmin(store)
+  const remote = createRemoteService(admin)
+  if (typeof ctx.provide === 'function') {
+    try {
+      ctx.provide(NAMESPACE, remote)
+    } catch (error) {
+      warn('the management page service could not be provided', error)
+    }
+  }
+  // The browser page mounts the same descriptors, so registration waits for the
+  // Typert registry rather than making it a hard dependency of the plugin.
+  ctx.inject(['typert'], (child) => {
+    const typert = child.typert
+    if (typert === undefined || typeof typert.register !== 'function') return
+    const register = () => {
+      try {
+        return typert.register({ package: PACKAGE_NAME, face: 'host', schemas: [], invocations: buildContribution().descriptors })
+      } catch (error) {
+        warn('the management page Remote could not be registered', error)
+        return () => undefined
+      }
+    }
+    if (typeof child.effect === 'function') child.effect(register, 'lore-memory: management page Remote')
+    else register()
   })
 
   // Memory: one snapshot per agent, frozen before its first model step.
